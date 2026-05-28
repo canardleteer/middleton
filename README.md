@@ -48,12 +48,15 @@ implementation versus narrative hype.
 
 Middleton runs five analysis phases against the target directory using either
 OpenCode, Claude Code, or Codex. Each phase uses a plan → build workflow: the agent plans
-its analysis, then writes structured markdown artifacts under `.middleton/`.
+its analysis, then writes structured markdown artifacts under
+`.middleton/<agent>/` (for example `.middleton/opencode/` or
+`.middleton/claudecode/`), so outcomes from different agent backends stay
+separate.
 Analysis is **read-only** — middleton rejects execution permissions (bash,
-compile, run, etc.) and only allows writes under `.middleton/` during the build
-step.
+compile, run, etc.) and only allows writes under the agent's `.middleton/<agent>/`
+directory during the build step.
 
-Session IDs are recorded in `.middleton/sessions.json` so you can resume or
+Session IDs are recorded in `.middleton/<agent>/sessions.json` so you can resume or
 inspect individual phases later.
 
 ```mermaid
@@ -140,11 +143,11 @@ Clone to a specific directory:
 middleton https://github.com/org/some-repo.git --output /tmp/some-repo
 ```
 
-Export PDFs for an existing `.middleton` directory, skipping files that already
+Export PDFs for an existing agent artifact directory, skipping files that already
 have a matching `.pdf`:
 
 ```bash
-middleton --export-pdf /path/to/repo/.middleton
+middleton --export-pdf /path/to/repo/.middleton/opencode
 ```
 
 ### Options
@@ -166,26 +169,27 @@ middleton --export-pdf /path/to/repo/.middleton
 
 ## Output
 
-All artifacts are written to `<target>/.middleton/`:
+All artifacts are written to `<target>/.middleton/<agent>/`:
 
 ```text
 .middleton/
-├── INTENT-SCAN-1.md    # Documentation-layer intent scan
-├── INTENT-SCAN-2.md    # Full-codebase intent scan
-├── DEPTH.md            # Hollow vs. tangible substance analysis
-├── PROSECUTION.md      # Adversarial brief
-├── DEFENSE.md          # Charitable brief
-├── JUDGEMENT.md        # Middle-ground legitimacy verdict
-├── sessions.json       # Session IDs per phase
-├── INTENT-SCAN-1.pdf   # Styled PDF export (and matching PDFs for each .md)
-├── ...
+└── opencode/              # or claudecode/, codex/, etc.
+    ├── INTENT-SCAN-1.md    # Documentation-layer intent scan
+    ├── INTENT-SCAN-2.md    # Full-codebase intent scan
+    ├── DEPTH.md            # Hollow vs. tangible substance analysis
+    ├── PROSECUTION.md      # Adversarial brief
+    ├── DEFENSE.md          # Charitable brief
+    ├── JUDGEMENT.md        # Middle-ground legitimacy verdict
+    ├── sessions.json       # Session IDs per phase
+    ├── INTENT-SCAN-1.pdf   # Styled PDF export (and matching PDFs for each .md)
+    └── ...
 ```
 
 After the pipeline completes, middleton runs **pandoc** on every `.md` file in
-`.middleton/` and writes a matching `.pdf` with numbered sections, a table of
+the agent directory and writes a matching `.pdf` with numbered sections, a table of
 contents, syntax highlighting, and a styled header/footer.
 
-The target repository itself is not modified beyond the `.middleton/` directory.
+The target repository itself is not modified beyond the `.middleton/<agent>/` directory.
 
 ## License
 

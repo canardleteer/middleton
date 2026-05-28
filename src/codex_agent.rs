@@ -90,7 +90,10 @@ pub async fn run_plan_build_phase(
     target: &Path,
     expected_outputs: &[&Path],
 ) -> Result<String> {
-    let middleton_dir = target.join(".middleton");
+    let middleton_dir = expected_outputs
+        .first()
+        .and_then(|path| path.parent())
+        .context("build step requires at least one expected output path")?;
     let cwd = target.to_string_lossy().into_owned();
 
     let mut client = runtime.client.lock().await;
@@ -123,7 +126,7 @@ pub async fn run_plan_build_phase(
         model,
         cwd: &cwd,
         step: TurnStep::Build,
-        sandbox_policy: sandbox_for_build(&middleton_dir)?,
+        sandbox_policy: sandbox_for_build(middleton_dir)?,
         phase,
         label: "build",
     })
@@ -134,7 +137,7 @@ pub async fn run_plan_build_phase(
         &thread_id,
         model,
         &cwd,
-        &middleton_dir,
+        middleton_dir,
         phase,
         expected_outputs,
     )
