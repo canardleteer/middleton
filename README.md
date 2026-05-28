@@ -5,7 +5,7 @@
 >
 > Published because people like seeing the results, and I want them to
 > burn their own tokens. Not really tested much. I would rather build
-> a custom agent for this.
+> a custom agent for this, but wanted to hand off the process to folks.
 
 **middleton** is a Rust CLI that runs a structured, multi-phase review of a git
 repository or local directory. It uses [OpenCode](https://opencode.ai) or
@@ -14,14 +14,29 @@ an artifact corpus — code, docs, proofs, CI, papers — and produce a trial-st
 analysis: adversarial prosecution, charitable defense, and a middle-ground
 legitimacy verdict.
 
-The name Middleton, comes from the excellent Judge Jeffery Middleton in St. Joseph
-County Michigan, who streams his courtroom ocassionally. While not much of a
-"theater" trial court (like this codebase puts on), a good show either way:
-[Youtube Channel](https://www.youtube.com/channel/UCS8gM5S889oBPyN6K07ZC6A/streams)
+> The name `middleton`, comes from the excellent Judge Jeffery Middleton in St.
+> Joseph County Michigan, who streams his courtroom ocassionally. While not much
+> of a "theater" trial court (like this codebase puts on), a good show either way:
+> [Youtube Channel](https://www.youtube.com/channel/UCS8gM5S889oBPyN6K07ZC6A/streams)
 
 The goal is not a conventional code review. Middleton asks whether a repository
 is substantive or performative: hollow scaffolding versus tangible engineering,
 stagecraft versus sincerity, claims backed by implementation versus narrative hype.
+
+## Requirements
+
+- **Rust** toolchain (2024 edition; build with `cargo build --release`)
+- **Build tools** for the default build: a C compiler and **Perl** (bundled
+  OpenSSL/libgit2 for HTTPS git clones). Use `cargo build --no-default-features`
+  if you prefer system libgit2/OpenSSL instead.
+- **One agent backend:**
+  - **OpenCode** (default): `opencode` on your `PATH` and **`OPENCODE_API_KEY`**
+    (OpenCode Go / `opencode-go`, not OpenCode Zen)
+  - **Claude Code**: `claude` on your `PATH` with Claude Code authentication
+    configured
+- **pandoc** on your `PATH` for PDF export (or pass `--skip-pdf` to skip)
+- **PDF engine**: **xelatex** recommended; middleton falls back to **pdflatex**
+  if xelatex is unavailable
 
 ## How it works
 
@@ -77,15 +92,6 @@ flowchart TB
 | **Prosecution** | Intent scans + depth | `PROSECUTION.md` | Adversarial brief: psychological profiling, mythos, publishing intent |
 | **Defense** | Intent scans + depth + prosecution | `DEFENSE.md` | Charitable rebuttal with the same structure as prosecution |
 | **Judgement** | All prior artifacts | `JUDGEMENT.md` | Middle-ground synthesis and a committed legitimacy verdict |
-
-## Prerequisites
-
-- **Rust** (2024 edition toolchain)
-- **One agent backend:**
-  - **OpenCode** (default): `opencode` on your `PATH` and **`OPENCODE_API_KEY`**
-    (OpenCode Go / `opencode-go`, not OpenCode Zen)
-  - **Claude Code**: `claude` on your `PATH` with Claude Code authentication configured
-- **pandoc** and a PDF engine (**xelatex** recommended; **pdflatex** used as fallback)
 
 ## Install
 
