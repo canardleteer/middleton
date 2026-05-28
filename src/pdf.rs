@@ -35,29 +35,15 @@ fn export_markdown_pdfs_with_options(
 
     let header_xelatex = middleton_dir.join(".middleton-export-header.tex");
     let header_pdflatex = middleton_dir.join(".middleton-export-header-pdflatex.tex");
-    fs::write(&header_xelatex, PDF_HEADER_XELATEX).with_context(|| {
-        format!(
-            "write pandoc header {}",
-            header_xelatex.display()
-        )
-    })?;
-    fs::write(&header_pdflatex, PDF_HEADER_PDFLATEX).with_context(|| {
-        format!(
-            "write pandoc header {}",
-            header_pdflatex.display()
-        )
-    })?;
+    fs::write(&header_xelatex, PDF_HEADER_XELATEX)
+        .with_context(|| format!("write pandoc header {}", header_xelatex.display()))?;
+    fs::write(&header_pdflatex, PDF_HEADER_PDFLATEX)
+        .with_context(|| format!("write pandoc header {}", header_pdflatex.display()))?;
 
     let mut pdfs = Vec::with_capacity(markdown_files.len());
     for markdown in markdown_files {
         let pdf = markdown.with_extension("pdf");
-        convert_markdown_to_pdf(
-            pandoc,
-            &header_xelatex,
-            &header_pdflatex,
-            &markdown,
-            &pdf,
-        )?;
+        convert_markdown_to_pdf(pandoc, &header_xelatex, &header_pdflatex, &markdown, &pdf)?;
         info!(
             markdown = %markdown.display(),
             pdf = %pdf.display(),
@@ -79,9 +65,7 @@ fn ensure_pandoc(pandoc: &str) -> Result<()> {
         return Ok(());
     }
 
-    bail!(
-        "`{pandoc}` is unavailable or failed. Install pandoc and a PDF engine such as xelatex."
-    );
+    bail!("`{pandoc}` is unavailable or failed. Install pandoc and a PDF engine such as xelatex.");
 }
 
 fn collect_markdown_files(middleton_dir: &Path, skip_existing: bool) -> Result<Vec<PathBuf>> {
@@ -92,9 +76,7 @@ fn collect_markdown_files(middleton_dir: &Path, skip_existing: bool) -> Result<V
             path.extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
         })
-        .filter(|path| {
-            !skip_existing || !path.with_extension("pdf").exists()
-        })
+        .filter(|path| !skip_existing || !path.with_extension("pdf").exists())
         .collect::<Vec<_>>();
 
     files.sort();
@@ -223,19 +205,14 @@ mod tests {
 
     #[test]
     fn formats_report_titles() {
-        assert_eq!(
-            format_report_title("INTENT-SCAN-1"),
-            "Intent Scan 1"
-        );
+        assert_eq!(format_report_title("INTENT-SCAN-1"), "Intent Scan 1");
         assert_eq!(format_report_title("JUDGEMENT"), "Judgement");
     }
 
     #[test]
     fn skips_markdown_with_existing_pdf() {
-        let dir = std::env::temp_dir().join(format!(
-            "middleton-pdf-skip-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("middleton-pdf-skip-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 

@@ -13,9 +13,7 @@ pub struct OpenCodeRuntime {
 }
 
 pub fn ensure_opencode_go_api_key() -> Result<()> {
-    if std::env::var_os("OPENCODE_API_KEY")
-        .is_some_and(|value| !value.is_empty())
-    {
+    if std::env::var_os("OPENCODE_API_KEY").is_some_and(|value| !value.is_empty()) {
         return Ok(());
     }
 

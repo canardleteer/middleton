@@ -17,8 +17,8 @@ impl SessionManifest {
             return Ok(Self::default());
         }
 
-        let contents = std::fs::read_to_string(&path)
-            .with_context(|| format!("read {}", path.display()))?;
+        let contents =
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
         serde_json::from_str(&contents).with_context(|| format!("parse {}", path.display()))
     }
 
@@ -28,10 +28,8 @@ impl SessionManifest {
 
     pub fn save(&self, target: &Path) -> Result<()> {
         let path = manifest_path(target);
-        let contents = serde_json::to_string_pretty(self)
-            .context("serialize session manifest")?;
-        std::fs::write(&path, contents)
-            .with_context(|| format!("write {}", path.display()))
+        let contents = serde_json::to_string_pretty(self).context("serialize session manifest")?;
+        std::fs::write(&path, contents).with_context(|| format!("write {}", path.display()))
     }
 }
 
