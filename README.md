@@ -1,11 +1,12 @@
 # middleton
 
-> [!WARNING]
-> **Clanker generated code.**
->
-> Published because people like seeing the results, and I want them to
-> burn their own tokens. Not really tested much. I would rather build
-> a custom agent for this, but wanted to hand off the process to folks.
+> *"is this legit?" Analysis Workflow
+
+> [!NOTE]
+> The name `middleton`, comes from the excellent Judge Jeffery Middleton in St.
+> Joseph County Michigan, who streams his courtroom ocassionally. While not much
+> of a "theater" trial court (like this codebase puts on), a good show either way:
+> [Youtube Channel](https://www.youtube.com/channel/UCS8gM5S889oBPyN6K07ZC6A/streams)
 
 **middleton** is a Rust CLI that runs a structured, multi-phase review of a git
 repository or local directory. It uses [OpenCode](https://opencode.ai) or
@@ -14,15 +15,20 @@ an artifact corpus — code, docs, proofs, CI, papers — and produce a trial-st
 analysis: adversarial prosecution, charitable defense, and a middle-ground
 legitimacy verdict.
 
-> [!NOTE]
-> The name `middleton`, comes from the excellent Judge Jeffery Middleton in St.
-> Joseph County Michigan, who streams his courtroom ocassionally. While not much
-> of a "theater" trial court (like this codebase puts on), a good show either way:
-> [Youtube Channel](https://www.youtube.com/channel/UCS8gM5S889oBPyN6K07ZC6A/streams)
+The goal is not a conventional code review. Middleton asks
+**whether a repository is substantive or performative**: hollow scaffolding
+versus tangible engineering, stagecraft versus sincerity, claims backed by
+implementation versus narrative hype.
 
-The goal is not a conventional code review. Middleton asks whether a repository
-is substantive or performative: hollow scaffolding versus tangible engineering,
-stagecraft versus sincerity, claims backed by implementation versus narrative hype.
+> [!WARNING]
+> **Clanker generated code.**
+
+> [!IMPORTANT]
+> Published because people like seeing the results, and I want them to
+> burn their own tokens. Not really tested much. I would rather build
+> a custom agent for this, but wanted to hand off the process to folks.
+>
+> Prompt editing is expected, depending on what you're looking at.
 
 ## Requirements
 
