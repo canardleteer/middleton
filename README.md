@@ -7,15 +7,33 @@
 > burn their own tokens. Not really tested much. I would rather build
 > a custom agent for this.
 
-**middleton** is a Rust CLI that runs a structured, multi-phase review of a git repository or local directory. It uses [OpenCode](https://opencode.ai) or [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents to examine an artifact corpus — code, docs, proofs, CI, papers — and produce a trial-style analysis: adversarial prosecution, charitable defense, and a middle-ground legitimacy verdict.
+**middleton** is a Rust CLI that runs a structured, multi-phase review of a git
+repository or local directory. It uses [OpenCode](https://opencode.ai) or
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents to examine
+an artifact corpus — code, docs, proofs, CI, papers — and produce a trial-style
+analysis: adversarial prosecution, charitable defense, and a middle-ground
+legitimacy verdict.
 
-The goal is not a conventional code review. Middleton asks whether a repository is substantive or performative: hollow scaffolding versus tangible engineering, stagecraft versus sincerity, claims backed by implementation versus narrative hype.
+The name Middleton, comes from the excellent Judge Jeffery Middleton in St. Joseph
+County Michigan, who streams his courtroom ocassionally. While not much of a
+"theater" trial court (like this codebase puts on), a good show either way:
+[Youtube Channel](https://www.youtube.com/channel/UCS8gM5S889oBPyN6K07ZC6A/streams)
+
+The goal is not a conventional code review. Middleton asks whether a repository
+is substantive or performative: hollow scaffolding versus tangible engineering,
+stagecraft versus sincerity, claims backed by implementation versus narrative hype.
 
 ## How it works
 
-Middleton runs five analysis phases against the target directory using either OpenCode or Claude Code. Each phase uses a plan → build workflow: the agent plans its analysis, then writes structured markdown artifacts under `.middleton/`. Analysis is **read-only** — middleton rejects execution permissions (bash, compile, run, etc.) and only allows writes under `.middleton/` during the build step.
+Middleton runs five analysis phases against the target directory using either
+OpenCode or Claude Code. Each phase uses a plan → build workflow: the agent plans
+its analysis, then writes structured markdown artifacts under `.middleton/`.
+Analysis is **read-only** — middleton rejects execution permissions (bash,
+compile, run, etc.) and only allows writes under `.middleton/` during the build
+step.
 
-Session IDs are recorded in `.middleton/sessions.json` so you can resume or inspect individual phases later.
+Session IDs are recorded in `.middleton/sessions.json` so you can resume or
+inspect individual phases later.
 
 ```mermaid
 flowchart TB
@@ -64,7 +82,8 @@ flowchart TB
 
 - **Rust** (2024 edition toolchain)
 - **One agent backend:**
-  - **OpenCode** (default): `opencode` on your `PATH` and **`OPENCODE_API_KEY`** (OpenCode Go / `opencode-go`, not OpenCode Zen)
+  - **OpenCode** (default): `opencode` on your `PATH` and **`OPENCODE_API_KEY`**
+    (OpenCode Go / `opencode-go`, not OpenCode Zen)
   - **Claude Code**: `claude` on your `PATH` with Claude Code authentication configured
 - **pandoc** and a PDF engine (**xelatex** recommended; **pdflatex** used as fallback)
 
@@ -103,7 +122,8 @@ Clone to a specific directory:
 middleton https://github.com/org/some-repo.git --output /tmp/some-repo
 ```
 
-Export PDFs for an existing `.middleton` directory, skipping files that already have a matching `.pdf`:
+Export PDFs for an existing `.middleton` directory, skipping files that already
+have a matching `.pdf`:
 
 ```bash
 middleton --export-pdf /path/to/repo/.middleton
@@ -129,7 +149,7 @@ middleton --export-pdf /path/to/repo/.middleton
 
 All artifacts are written to `<target>/.middleton/`:
 
-```
+```text
 .middleton/
 ├── INTENT-SCAN-1.md    # Documentation-layer intent scan
 ├── INTENT-SCAN-2.md    # Full-codebase intent scan
@@ -142,7 +162,9 @@ All artifacts are written to `<target>/.middleton/`:
 ├── ...
 ```
 
-After the pipeline completes, middleton runs **pandoc** on every `.md` file in `.middleton/` and writes a matching `.pdf` with numbered sections, a table of contents, syntax highlighting, and a styled header/footer.
+After the pipeline completes, middleton runs **pandoc** on every `.md` file in
+`.middleton/` and writes a matching `.pdf` with numbered sections, a table of
+contents, syntax highlighting, and a styled header/footer.
 
 The target repository itself is not modified beyond the `.middleton/` directory.
 
