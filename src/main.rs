@@ -1,5 +1,6 @@
 mod agent;
 mod claude_agent;
+mod codex_agent;
 mod manifest;
 mod opencode;
 mod output;
@@ -19,6 +20,9 @@ use crate::agent::AgentKind;
 use crate::claude_agent::{
     ClaudeCodeRuntime, model_label as claude_model_label, parse_model as claude_model,
 };
+use crate::codex_agent::{
+    CodexRuntime, model_label as codex_model_label, parse_model as codex_model,
+};
 use crate::manifest::SessionManifest;
 use crate::opencode::{
     OpenCodeRuntime, ensure_opencode_go_api_key, model_ref_label, opencode_go_model, start_runtime,
@@ -33,7 +37,7 @@ use crate::session::run_plan_build_phase as run_opencode_plan_build_phase;
 #[derive(Parser)]
 #[command(
     name = "middleton",
-    about = "Run prosecution/defense/judgement review via OpenCode or Claude Code"
+    about = "Run prosecution/defense/judgement review via OpenCode, Claude Code, or Codex"
 )]
 struct Cli {
     /// Local directory or git repository URL
@@ -53,7 +57,7 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = AgentKind::OpenCode)]
     agent: AgentKind,
 
-    /// Model id for the selected agent (OpenCode Go catalog id, or sonnet/opus/haiku for Claude Code)
+    /// Model id for the selected agent (OpenCode Go catalog id, sonnet/opus/haiku for Claude Code, or a Codex model id)
     #[arg(long, default_value = "kimi-k2.5")]
     model: String,
 
@@ -68,6 +72,10 @@ struct Cli {
     /// Claude Code binary path
     #[arg(long, default_value = "claude")]
     claude: String,
+
+    /// Codex CLI binary path
+    #[arg(long, default_value = "codex")]
+    codex: String,
 
     /// Log level filter (RUST_LOG-style; default info)
     #[arg(long, default_value = "info")]
@@ -89,6 +97,7 @@ struct Cli {
 enum AgentRuntime {
     OpenCode(Box<OpenCodeRuntime>),
     ClaudeCode(ClaudeCodeRuntime),
+    Codex(CodexRuntime),
 }
 
 #[tokio::main]
@@ -171,6 +180,14 @@ async fn start_agent_runtime(target: &Path, cli: &Cli) -> Result<AgentRuntime> {
             );
             Ok(AgentRuntime::ClaudeCode(runtime))
         }
+        AgentKind::Codex => {
+            let runtime = codex_agent::start_runtime(&cli.codex, target).await?;
+            info!(
+                provider_model = codex_model_label(codex_model(&cli.model).as_deref()),
+                "Codex app-server ready"
+            );
+            Ok(AgentRuntime::Codex(runtime))
+        }
     }
 }
 
@@ -182,6 +199,10 @@ async fn stop_agent_runtime(runtime: AgentRuntime) -> Result<()> {
         }
         AgentRuntime::ClaudeCode(_) => {
             info!("Claude Code sessions complete");
+        }
+        AgentRuntime::Codex(runtime) => {
+            codex_agent::stop_runtime(runtime).await?;
+            info!("Codex app-server stopped");
         }
     }
     Ok(())
@@ -328,11 +349,24 @@ async fn run_phase(
         AgentRuntime::ClaudeCode(runtime) => {
             let model = claude_model(model);
             claude_agent::run_plan_build_phase(
-                &runtime.client,
+                runtime,
                 phase,
                 plan_prompt,
                 build_prompt,
                 model,
+                target,
+                expected_outputs,
+            )
+            .await
+        }
+        AgentRuntime::Codex(runtime) => {
+            let model = codex_model(model);
+            codex_agent::run_plan_build_phase(
+                runtime,
+                phase,
+                plan_prompt,
+                build_prompt,
+                model.as_deref(),
                 target,
                 expected_outputs,
             )
