@@ -7,8 +7,6 @@ use opencode_rs::server::{ManagedServer, ServerOptions};
 use opencode_rs::types::project::ModelRef;
 use url::Url;
 
-use crate::Cli;
-
 pub struct OpenCodeRuntime {
     pub server: ManagedServer,
     pub client: Client,
@@ -44,14 +42,18 @@ pub fn model_ref_label(model: &ModelRef) -> String {
     )
 }
 
-pub async fn start_runtime(target: &Path, cli: &Cli) -> Result<OpenCodeRuntime> {
+pub async fn start_runtime(
+    target: &Path,
+    hostname: &str,
+    opencode_bin: &str,
+) -> Result<OpenCodeRuntime> {
     ensure_opencode_go_api_key()?;
 
     let server = ManagedServer::start(
         ServerOptions::new()
             .directory(target)
-            .hostname(&cli.hostname)
-            .binary(&cli.opencode),
+            .hostname(hostname)
+            .binary(opencode_bin),
     )
     .await
     .context("start opencode serve")?;
