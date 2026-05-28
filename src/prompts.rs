@@ -16,7 +16,8 @@ macro_rules! read_only_build {
     () => {
         "Transcribe your completed plan into the output file(s) only. Do not run commands, \
 re-investigate, or gather new evidence during this build step. Do not claim execution \
-you did not perform. Do not modify any files outside `.middleton/`."
+you did not perform. Write every required output file; do not stop until all exist and are \
+non-empty. Do not modify any files outside `.middleton/`."
     };
 }
 
@@ -89,8 +90,9 @@ files during this plan phase.";
 pub const INTENT_BUILD: &str = concat!(
     "Write your documentation-layer intent scan to `.middleton/INTENT-SCAN-1.md` first, \
 using the required report structure from your plan.\n\n",
-    "Then write your full-codebase intent scan to `.middleton/INTENT-SCAN-2.md`. \
-Do not modify any other files.\n\n",
+    "Then write your full-codebase intent scan to `.middleton/INTENT-SCAN-2.md`.\n\n",
+    "Both files are required. Do not stop until `.middleton/INTENT-SCAN-1.md` and \
+`.middleton/INTENT-SCAN-2.md` exist and are non-empty. Do not modify any other files.\n\n",
     read_only_build!(),
 );
 

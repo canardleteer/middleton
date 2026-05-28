@@ -2,6 +2,7 @@ mod agent;
 mod claude_agent;
 mod manifest;
 mod opencode;
+mod output;
 mod pdf;
 mod prompts;
 mod session;

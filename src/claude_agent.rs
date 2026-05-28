@@ -4,7 +4,13 @@ use anyhow::{Context, Result, bail};
 use claudecode::{Client, Model, PermissionMode, SessionConfig};
 use tracing::{info, warn};
 
+use crate::output::{
+    log_missing_outputs, log_outputs_ready, missing_outputs, nudge_prompt, settle_outputs,
+    verify_outputs,
+};
+
 const READ_ONLY_TOOLS: &[&str] = &["Bash", "WebFetch", "WebSearch"];
+const MAX_BUILD_ATTEMPTS: u32 = 3;
 
 pub struct ClaudeCodeRuntime {
     pub client: Client,
@@ -55,18 +61,15 @@ pub async fn run_plan_build_phase(
     expected_outputs: &[&Path],
 ) -> Result<String> {
     info!(phase, agent = "claudecode", "starting plan step");
-    let plan_config = SessionConfig::builder(plan_prompt)
-        .working_dir(target)
-        .model(model)
-        .permission_mode(PermissionMode::Plan)
-        .disallowed_tools(
-            READ_ONLY_TOOLS
-                .iter()
-                .map(|tool| (*tool).to_string())
-                .collect(),
-        )
-        .build()
-        .with_context(|| format!("build claudecode plan config for {phase}"))?;
+    let plan_config = build_config(
+        plan_prompt,
+        target,
+        model,
+        PermissionMode::Plan,
+        None,
+        phase,
+        "plan",
+    )?;
 
     let plan_result = client
         .launch_and_wait(plan_config)
@@ -89,39 +92,16 @@ pub async fn run_plan_build_phase(
 
     info!(phase, session_id = %session_id, "plan step complete");
 
-    info!(phase, session_id = %session_id, "starting build step");
-    let build_config = SessionConfig::builder(build_prompt)
-        .working_dir(target)
-        .model(model)
-        .resume_session_id(&session_id)
-        .permission_mode(PermissionMode::AcceptEdits)
-        .disallowed_tools(
-            READ_ONLY_TOOLS
-                .iter()
-                .map(|tool| (*tool).to_string())
-                .collect(),
-        )
-        .build()
-        .with_context(|| format!("build claudecode build config for {phase}"))?;
-
-    let build_result = client
-        .launch_and_wait(build_config)
-        .await
-        .with_context(|| format!("run claudecode build step for {phase}"))?;
-
-    if build_result.is_error {
-        bail!(
-            "claudecode build step failed for {phase}: {}",
-            build_result
-                .error
-                .or(build_result.content)
-                .unwrap_or_else(|| "unknown error".to_string())
-        );
-    }
-
-    for output in expected_outputs {
-        verify_output(output, phase)?;
-    }
+    ensure_build_outputs(
+        client,
+        phase,
+        build_prompt,
+        model,
+        target,
+        &session_id,
+        expected_outputs,
+    )
+    .await?;
 
     info!(
         phase,
@@ -133,15 +113,91 @@ pub async fn run_plan_build_phase(
     Ok(session_id)
 }
 
-fn verify_output(path: &Path, phase: &str) -> Result<()> {
-    let metadata = std::fs::metadata(path)
-        .with_context(|| format!("expected output for {phase} at {}", path.display()))?;
+async fn ensure_build_outputs(
+    client: &Client,
+    phase: &str,
+    build_prompt: &str,
+    model: Model,
+    target: &Path,
+    session_id: &str,
+    expected_outputs: &[&Path],
+) -> Result<()> {
+    let mut prompt = build_prompt.to_string();
 
-    if metadata.len() == 0 {
-        bail!("output for {phase} is empty: {}", path.display());
+    for attempt in 1..=MAX_BUILD_ATTEMPTS {
+        info!(phase, session_id = %session_id, attempt, "starting build step");
+        let build_config = build_config(
+            &prompt,
+            target,
+            model,
+            PermissionMode::AcceptEdits,
+            Some(session_id),
+            phase,
+            "build",
+        )?;
+
+        let build_result = client
+            .launch_and_wait(build_config)
+            .await
+            .with_context(|| format!("run claudecode build step for {phase}"))?;
+
+        if build_result.is_error {
+            bail!(
+                "claudecode build step failed for {phase}: {}",
+                build_result
+                    .error
+                    .or(build_result.content)
+                    .unwrap_or_else(|| "unknown error".to_string())
+            );
+        }
+
+        let _ = settle_outputs(expected_outputs).await;
+
+        let missing = missing_outputs(expected_outputs);
+        if missing.is_empty() {
+            log_outputs_ready(phase, attempt);
+            return Ok(());
+        }
+
+        log_missing_outputs(phase, attempt, MAX_BUILD_ATTEMPTS, &missing);
+
+        if attempt == MAX_BUILD_ATTEMPTS {
+            return verify_outputs(expected_outputs, phase);
+        }
+
+        prompt = nudge_prompt(&missing);
     }
 
-    Ok(())
+    verify_outputs(expected_outputs, phase)
+}
+
+fn build_config(
+    prompt: &str,
+    target: &Path,
+    model: Model,
+    permission_mode: PermissionMode,
+    session_id: Option<&str>,
+    phase: &str,
+    step: &str,
+) -> Result<SessionConfig> {
+    let mut builder = SessionConfig::builder(prompt)
+        .working_dir(target)
+        .model(model)
+        .permission_mode(permission_mode)
+        .disallowed_tools(
+            READ_ONLY_TOOLS
+                .iter()
+                .map(|tool| (*tool).to_string())
+                .collect(),
+        );
+
+    if let Some(session_id) = session_id {
+        builder = builder.resume_session_id(session_id);
+    }
+
+    builder
+        .build()
+        .with_context(|| format!("build claudecode {step} config for {phase}"))
 }
 
 #[cfg(test)]
