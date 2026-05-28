@@ -19,6 +19,7 @@ env_logger = "0.11"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 claude-codes = { version = "2.1", default-features = false, features = ["async-client"] }
+uuid = { version = "1", features = ["v4"] }
 codex-codes = { version = "0.129", default-features = false, features = ["async-client"] }
 
 # git2 defaults to system libgit2/OpenSSL, which often fails when dev headers or
