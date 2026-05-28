@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use opencode_rs::Client;
 use opencode_rs::types::event::Event;
 use opencode_rs::types::message::{PromptPart, PromptRequest};
-use opencode_rs::types::permission::{PermissionReply, PermissionReplyRequest};
+use opencode_rs::types::permission::{PermissionReply, PermissionReplyRequest, PermissionRequest};
 use opencode_rs::types::project::ModelRef;
 use opencode_rs::types::question::QuestionReply;
 use opencode_rs::types::session::{CreateSessionRequest, SessionStatusInfo};
@@ -15,6 +15,12 @@ const IDLE_GRACE: Duration = Duration::from_secs(2);
 const SESSION_DEADLINE: Duration = Duration::from_secs(3600);
 const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(300);
 const DEFAULT_QUESTION_ANSWER: &str = "Use your best judgment and proceed without blocking.";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionStep {
+    Plan,
+    Build,
+}
 
 pub async fn run_plan_build_phase(
     client: &Client,
@@ -40,10 +46,10 @@ pub async fn run_plan_build_phase(
         .with_context(|| format!("subscribe to session events for {phase}"))?;
 
     send_prompt(client, &session.id, plan_prompt, model, "plan").await?;
-    wait_until_idle(client, &session.id, &mut subscription, true).await?;
+    wait_until_idle(client, &session.id, &mut subscription, SessionStep::Plan, true).await?;
 
     send_prompt(client, &session.id, build_prompt, model, "build").await?;
-    wait_until_idle(client, &session.id, &mut subscription, true).await?;
+    wait_until_idle(client, &session.id, &mut subscription, SessionStep::Build, true).await?;
 
     for output in expected_outputs {
         verify_output(output, phase)?;
@@ -94,6 +100,7 @@ async fn wait_until_idle(
     client: &Client,
     session_id: &str,
     subscription: &mut opencode_rs::sse::SseSubscription<Event>,
+    step: SessionStep,
     dispatched_new_work: bool,
 ) -> Result<()> {
     let deadline = tokio::time::Instant::now() + SESSION_DEADLINE;
@@ -123,7 +130,7 @@ async fn wait_until_idle(
                     continue;
                 };
 
-                if handle_event(client, session_id, event, &mut last_activity).await? {
+                if handle_event(client, session_id, event, step, &mut last_activity).await? {
                     return Ok(());
                 }
                 observed_busy = true;
@@ -131,7 +138,7 @@ async fn wait_until_idle(
             }
 
             _ = poll_interval.tick() => {
-                if handle_pending_interactions(client, session_id).await? {
+                if handle_pending_interactions(client, session_id, step).await? {
                     observed_busy = true;
                     last_activity = tokio::time::Instant::now();
                     continue;
@@ -195,6 +202,7 @@ async fn handle_event(
     client: &Client,
     session_id: &str,
     event: Event,
+    step: SessionStep,
     last_activity: &mut tokio::time::Instant,
 ) -> Result<bool> {
     match event {
@@ -211,7 +219,7 @@ async fn handle_event(
             bail!("session {session_id} failed: {message}");
         }
         Event::PermissionAsked { properties } => {
-            reply_permission(client, &properties.request.id).await?;
+            reply_permission(client, &properties.request, step).await?;
             *last_activity = tokio::time::Instant::now();
             Ok(false)
         }
@@ -230,7 +238,11 @@ async fn handle_event(
     }
 }
 
-async fn handle_pending_interactions(client: &Client, session_id: &str) -> Result<bool> {
+async fn handle_pending_interactions(
+    client: &Client,
+    session_id: &str,
+    step: SessionStep,
+) -> Result<bool> {
     let permissions = client
         .permissions()
         .list()
@@ -244,7 +256,7 @@ async fn handle_pending_interactions(client: &Client, session_id: &str) -> Resul
         .into_iter()
         .find(|request| request.session_id == session_id)
     {
-        reply_permission(client, &permission.id).await?;
+        reply_permission(client, &permission, step).await?;
         return Ok(true);
     }
 
@@ -268,21 +280,101 @@ async fn handle_pending_interactions(client: &Client, session_id: &str) -> Resul
     Ok(false)
 }
 
-async fn reply_permission(client: &Client, request_id: &str) -> Result<()> {
+async fn reply_permission(
+    client: &Client,
+    request: &PermissionRequest,
+    step: SessionStep,
+) -> Result<()> {
+    let reply = permission_reply(request, step);
+    let decision = match reply {
+        PermissionReply::Reject => "rejected",
+        PermissionReply::Once | PermissionReply::Always => "approved",
+    };
+
+    if reply == PermissionReply::Reject {
+        info!(
+            request_id = %request.id,
+            permission = %request.permission,
+            ?step,
+            patterns = ?request.patterns,
+            "denied permission"
+        );
+    } else {
+        debug!(
+            request_id = %request.id,
+            permission = %request.permission,
+            ?step,
+            decision,
+            "permission reply"
+        );
+    }
+
     client
         .permissions()
         .reply(
-            request_id,
+            &request.id,
             &PermissionReplyRequest {
-                reply: PermissionReply::Always,
+                reply,
                 message: None,
             },
         )
         .await
-        .with_context(|| format!("reply to permission request {request_id}"))?;
+        .with_context(|| format!("reply to permission request {}", request.id))?;
 
-    debug!(request_id, "auto-approved permission");
     Ok(())
+}
+
+fn permission_reply(request: &PermissionRequest, step: SessionStep) -> PermissionReply {
+    let permission = request.permission.to_ascii_lowercase();
+
+    if is_execution_permission(&permission) {
+        return PermissionReply::Reject;
+    }
+
+    match step {
+        SessionStep::Plan => {
+            if is_read_permission(&permission) {
+                PermissionReply::Once
+            } else {
+                PermissionReply::Reject
+            }
+        }
+        SessionStep::Build => {
+            if is_write_permission(&permission) && writes_middleton_only(&request.patterns) {
+                PermissionReply::Once
+            } else if is_read_permission(&permission) {
+                PermissionReply::Once
+            } else {
+                PermissionReply::Reject
+            }
+        }
+    }
+}
+
+fn is_execution_permission(permission: &str) -> bool {
+    permission.contains("execute")
+        || permission.contains("bash")
+        || permission.contains("command")
+        || permission.contains("terminal")
+        || permission.contains("install")
+        || permission.contains("network")
+        || permission.contains("fetch")
+        || permission.contains("download")
+}
+
+fn is_read_permission(permission: &str) -> bool {
+    permission.contains("read") || permission.contains("view") || permission.contains("list")
+}
+
+fn is_write_permission(permission: &str) -> bool {
+    permission.contains("write") || permission.contains("edit") || permission.contains("create")
+}
+
+fn writes_middleton_only(patterns: &[String]) -> bool {
+    !patterns.is_empty()
+        && patterns
+            .iter()
+            .all(|pattern| pattern.contains(".middleton/") || pattern.ends_with(".middleton"))
 }
 
 async fn reply_question(
@@ -325,4 +417,70 @@ fn verify_output(path: &Path, phase: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(permission: &str, patterns: &[&str]) -> PermissionRequest {
+        PermissionRequest {
+            id: "req-1".to_string(),
+            session_id: "sess-1".to_string(),
+            permission: permission.to_string(),
+            patterns: patterns.iter().map(|pattern| (*pattern).to_string()).collect(),
+            metadata: None,
+            always: Vec::new(),
+            tool: None,
+        }
+    }
+
+    #[test]
+    fn plan_allows_reads_and_rejects_execution() {
+        assert_eq!(
+            permission_reply(&request("file.read", &["src/main.rs"]), SessionStep::Plan),
+            PermissionReply::Once
+        );
+        assert_eq!(
+            permission_reply(&request("bash.execute", &["cargo test"]), SessionStep::Plan),
+            PermissionReply::Reject
+        );
+    }
+
+    #[test]
+    fn plan_rejects_writes() {
+        assert_eq!(
+            permission_reply(
+                &request("file.write", &["/repo/.middleton/DEPTH.md"]),
+                SessionStep::Plan
+            ),
+            PermissionReply::Reject
+        );
+    }
+
+    #[test]
+    fn build_allows_middleton_writes_only() {
+        assert_eq!(
+            permission_reply(
+                &request("file.write", &["/repo/.middleton/DEPTH.md"]),
+                SessionStep::Build
+            ),
+            PermissionReply::Once
+        );
+        assert_eq!(
+            permission_reply(&request("file.write", &["/repo/src/main.rs"]), SessionStep::Build),
+            PermissionReply::Reject
+        );
+    }
+
+    #[test]
+    fn build_rejects_execution() {
+        assert_eq!(
+            permission_reply(
+                &request("bash.execute", &["cargo run -p rebuild-rs"]),
+                SessionStep::Build
+            ),
+            PermissionReply::Reject
+        );
+    }
 }
