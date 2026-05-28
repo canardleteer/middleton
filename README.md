@@ -1,5 +1,12 @@
 # middleton
 
+> [!WARNING]
+> **Clanker generated code.**
+>
+> Published because people like seeing the results, and I want them to
+> burn their own tokens. Not really tested much. I would rather build
+> a custom agent for this.
+
 **middleton** is a Rust CLI that runs a structured, multi-phase review of a git repository or local directory. It uses [OpenCode](https://opencode.ai) or [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents to examine an artifact corpus — code, docs, proofs, CI, papers — and produce a trial-style analysis: adversarial prosecution, charitable defense, and a middle-ground legitimacy verdict.
 
 The goal is not a conventional code review. Middleton asks whether a repository is substantive or performative: hollow scaffolding versus tangible engineering, stagecraft versus sincerity, claims backed by implementation versus narrative hype.

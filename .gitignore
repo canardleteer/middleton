@@ -1,1 +1,6 @@
 /target
+
+# Local env files (API keys, etc.)
+.env
+.env.*
+!.env.example
