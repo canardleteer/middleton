@@ -116,14 +116,7 @@ async fn ensure_build_outputs(
 
         let prompt = nudge_prompt(&missing);
         send_prompt(client, session_id, &prompt, model, "build").await?;
-        wait_until_idle(
-            client,
-            session_id,
-            subscription,
-            SessionStep::Build,
-            true,
-        )
-        .await?;
+        wait_until_idle(client, session_id, subscription, SessionStep::Build, true).await?;
     }
 
     verify_outputs(expected_outputs, phase)
