@@ -14,6 +14,7 @@ an artifact corpus — code, docs, proofs, CI, papers — and produce a trial-st
 analysis: adversarial prosecution, charitable defense, and a middle-ground
 legitimacy verdict.
 
+> [!NOTE]
 > The name `middleton`, comes from the excellent Judge Jeffery Middleton in St.
 > Joseph County Michigan, who streams his courtroom ocassionally. While not much
 > of a "theater" trial court (like this codebase puts on), a good show either way:
@@ -26,9 +27,6 @@ stagecraft versus sincerity, claims backed by implementation versus narrative hy
 ## Requirements
 
 - **Rust** toolchain (2024 edition; build with `cargo build --release`)
-- **Build tools** for the default build: a C compiler and **Perl** (bundled
-  OpenSSL/libgit2 for HTTPS git clones). Use `cargo build --no-default-features`
-  if you prefer system libgit2/OpenSSL instead.
 - **One agent backend:**
   - **OpenCode** (default): `opencode` on your `PATH` and **`OPENCODE_API_KEY`**
     (OpenCode Go / `opencode-go`, not OpenCode Zen)
