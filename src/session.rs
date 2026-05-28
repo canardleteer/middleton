@@ -11,9 +11,15 @@ use opencode_rs::types::question::QuestionReply;
 use opencode_rs::types::session::{CreateSessionRequest, SessionStatusInfo};
 use tracing::{debug, error, info, warn};
 
+use crate::output::{
+    log_missing_outputs, log_outputs_ready, missing_outputs, nudge_prompt, settle_outputs,
+    verify_outputs,
+};
+
 const IDLE_GRACE: Duration = Duration::from_secs(2);
 const SESSION_DEADLINE: Duration = Duration::from_secs(3600);
 const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(300);
+const MAX_BUILD_ATTEMPTS: u32 = 3;
 const DEFAULT_QUESTION_ANSWER: &str = "Use your best judgment and proceed without blocking.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,9 +71,16 @@ pub async fn run_plan_build_phase(
     )
     .await?;
 
-    for output in expected_outputs {
-        verify_output(output, phase)?;
-    }
+    ensure_build_outputs(
+        client,
+        &session.id,
+        &mut subscription,
+        model,
+        expected_outputs,
+        phase,
+    )
+    .await?;
+
     info!(
         phase,
         session_id = %session.id,
@@ -76,6 +89,44 @@ pub async fn run_plan_build_phase(
     );
 
     Ok(session.id)
+}
+
+async fn ensure_build_outputs(
+    client: &Client,
+    session_id: &str,
+    subscription: &mut opencode_rs::sse::SseSubscription<Event>,
+    model: &ModelRef,
+    expected_outputs: &[&Path],
+    phase: &str,
+) -> Result<()> {
+    for attempt in 1..=MAX_BUILD_ATTEMPTS {
+        let _ = settle_outputs(expected_outputs).await;
+
+        let missing = missing_outputs(expected_outputs);
+        if missing.is_empty() {
+            log_outputs_ready(phase, attempt);
+            return Ok(());
+        }
+
+        log_missing_outputs(phase, attempt, MAX_BUILD_ATTEMPTS, &missing);
+
+        if attempt == MAX_BUILD_ATTEMPTS {
+            return verify_outputs(expected_outputs, phase);
+        }
+
+        let prompt = nudge_prompt(&missing);
+        send_prompt(client, session_id, &prompt, model, "build").await?;
+        wait_until_idle(
+            client,
+            session_id,
+            subscription,
+            SessionStep::Build,
+            true,
+        )
+        .await?;
+    }
+
+    verify_outputs(expected_outputs, phase)
 }
 
 async fn send_prompt(
@@ -406,17 +457,6 @@ async fn reply_question(
         .with_context(|| format!("reply to question request {}", question.id))?;
 
     debug!(request_id = %question.id, "auto-answered question");
-    Ok(())
-}
-
-fn verify_output(path: &Path, phase: &str) -> Result<()> {
-    let metadata = std::fs::metadata(path)
-        .with_context(|| format!("expected output for {phase} at {}", path.display()))?;
-
-    if metadata.len() == 0 {
-        bail!("output for {phase} is empty: {}", path.display());
-    }
-
     Ok(())
 }
 
