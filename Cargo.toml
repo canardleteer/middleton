@@ -9,6 +9,7 @@ authors = ["canardleteer"]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 claudecode = "0.1.20"
+# HTTPS/SSH cloning via libgit2 + OpenSSL; see [features] for vendored TLS.
 git2 = "0.20"
 opencode_rs = { version = "0.11.1", features = ["http", "sse", "server"] }
 serde = { version = "1", features = ["derive"] }
@@ -18,3 +19,10 @@ tracing = "0.1"
 env_logger = "0.11"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
+
+# git2 defaults to system libgit2/OpenSSL, which often fails when dev headers or
+# versions mismatch. vendored-git bundles both for a self-contained build (still
+# needs a C toolchain and perl). Disable with: cargo build --no-default-features
+[features]
+default = ["vendored-git"]
+vendored-git = ["git2/vendored-libgit2", "git2/vendored-openssl"]

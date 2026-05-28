@@ -26,10 +26,7 @@ pub fn verify_outputs(expected_outputs: &[&Path], phase: &str) -> Result<()> {
         return Ok(());
     }
 
-    bail!(
-        "missing output for {phase}: {}",
-        format_paths(&missing)
-    );
+    bail!("missing output for {phase}: {}", format_paths(&missing));
 }
 
 pub async fn wait_for_outputs(expected_outputs: &[&Path], timeout: Duration) -> bool {
@@ -97,10 +94,8 @@ mod tests {
 
     #[test]
     fn detects_missing_and_empty_outputs() {
-        let dir = std::env::temp_dir().join(format!(
-            "middleton-output-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("middleton-output-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
@@ -114,7 +109,11 @@ mod tests {
         let still_missing = missing_outputs(&expected);
         assert_eq!(still_missing.len(), 2);
         assert!(still_missing.iter().any(|path| path.ends_with("empty.md")));
-        assert!(still_missing.iter().any(|path| path.ends_with("missing.md")));
+        assert!(
+            still_missing
+                .iter()
+                .any(|path| path.ends_with("missing.md"))
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
