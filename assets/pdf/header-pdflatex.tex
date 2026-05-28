@@ -1,0 +1,46 @@
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{hyperref}
+
+\definecolor{MiddletonNavy}{HTML}{1B2A4A}
+\definecolor{MiddletonAccent}{HTML}{2E6DA4}
+\definecolor{MiddletonMuted}{HTML}{5C6773}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=MiddletonAccent,
+  urlcolor=MiddletonAccent,
+  citecolor=MiddletonAccent
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\sffamily\color{MiddletonMuted}middleton trial report}
+\fancyhead[R]{\small\sffamily\color{MiddletonMuted}\leftmark}
+\fancyfoot[C]{\small\sffamily\color{MiddletonMuted}\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\titleformat{\section}
+  {\Large\sffamily\bfseries\color{MiddletonNavy}}
+  {\thesection}{0.75em}{}
+\titleformat{\subsection}
+  {\large\sffamily\bfseries\color{MiddletonNavy}}
+  {\thesubsection}{0.75em}{}
+\titleformat{\subsubsection}
+  {\normalsize\sffamily\bfseries\color{MiddletonAccent}}
+  {\thesubsubsection}{0.75em}{}
+
+\titlespacing*{\section}{0pt}{1.6em}{0.8em}
+\titlespacing*{\subsection}{0pt}{1.2em}{0.6em}
+\titlespacing*{\subsubsection}{0pt}{1.0em}{0.4em}
+
+\setlist[itemize]{topsep=0.35em, itemsep=0.2em, parsep=0pt}
+\setlist[enumerate]{topsep=0.35em, itemsep=0.2em, parsep=0pt}
+
+\setlength{\parskip}{0.55em}
+\setlength{\parindent}{0pt}
