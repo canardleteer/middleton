@@ -4,6 +4,7 @@ mod codex_agent;
 mod manifest;
 mod opencode;
 mod output;
+mod paths;
 mod pdf;
 mod prompts;
 mod session;
@@ -28,10 +29,8 @@ use crate::opencode::{
     OpenCodeRuntime, ensure_opencode_go_api_key, model_ref_label, opencode_go_model, start_runtime,
     stop_runtime,
 };
-use crate::prompts::{
-    DEFENSE_BUILD, DEFENSE_PROMPT, DEPTH_BUILD, DEPTH_PROMPT, INTENT_BUILD, INTENT_PROMPT,
-    JUDGEMENT_BUILD, JUDGEMENT_PROMPT, PROSECUTION_BUILD, PROSECUTION_PROMPT, with_note,
-};
+use crate::paths::ArtifactPaths;
+use crate::prompts::{PhasePrompts, with_note};
 use crate::session::run_plan_build_phase as run_opencode_plan_build_phase;
 
 #[derive(Parser)]
@@ -48,7 +47,7 @@ struct Cli {
     #[arg(short, long)]
     output: Option<PathBuf>,
 
-    /// Export markdown files in a `.middleton` directory to PDF, skipping files that
+    /// Export markdown files in a `.middleton/<agent>` directory to PDF, skipping files that
     /// already have a matching `.pdf`
     #[arg(long, value_name = "DIR")]
     export_pdf: Option<PathBuf>,
@@ -119,23 +118,26 @@ async fn main() -> Result<()> {
     }
 
     let target = target::resolve_target(input, &cli.output)?;
-    std::fs::create_dir_all(target.join(".middleton"))
-        .with_context(|| format!("create {}", target.join(".middleton").display()))?;
+    let artifacts = ArtifactPaths::new(&target, cli.agent);
+    artifacts
+        .ensure_dir()
+        .with_context(|| format!("create {}", artifacts.dir.display()))?;
 
     info!(
         agent = cli.agent.label(),
         model = %cli.model,
         target = %target.display(),
+        artifacts_dir = %artifacts.dir.display(),
         has_note = cli.note.as_ref().is_some_and(|note| !note.trim().is_empty()),
         "starting middleton"
     );
 
     let runtime = start_agent_runtime(&target, &cli).await?;
-    let mut manifest = SessionManifest::load_or_default(&target)?;
+    let mut manifest = SessionManifest::load_or_default(&target, cli.agent)?;
 
     let pipeline_result = run_pipeline(
         &runtime,
-        &target,
+        &artifacts,
         &cli.model,
         &mut manifest,
         cli.note.as_deref(),
@@ -143,20 +145,19 @@ async fn main() -> Result<()> {
     .await;
 
     if pipeline_result.is_err() {
-        let _ = manifest.save(&target);
+        let _ = manifest.save(&target, cli.agent);
     }
 
     stop_agent_runtime(runtime).await?;
 
     pipeline_result?;
     if !cli.skip_pdf {
-        let middleton_dir = target.join(".middleton");
-        let pdfs = pdf::export_markdown_pdfs(&middleton_dir, &cli.pandoc)?;
-        info!(count = pdfs.len(), dir = %middleton_dir.display(), "pdf export complete");
+        let pdfs = pdf::export_markdown_pdfs(&artifacts.dir, &cli.pandoc)?;
+        info!(count = pdfs.len(), dir = %artifacts.dir.display(), "pdf export complete");
     }
     info!(
         target = %target.display(),
-        manifest_path = %target.join(".middleton/sessions.json").display(),
+        manifest_path = %artifacts.join("sessions.json").display(),
         "middleton complete"
     );
     Ok(())
@@ -228,28 +229,30 @@ fn run_export_pdf(middleton_dir: &Path, pandoc: &str) -> Result<()> {
 
 async fn run_pipeline(
     runtime: &AgentRuntime,
-    target: &Path,
+    artifacts: &ArtifactPaths,
     model: &str,
     manifest: &mut SessionManifest,
     note: Option<&str>,
 ) -> Result<()> {
-    let intent_plan = with_note(INTENT_PROMPT, note);
-    let intent_build = with_note(INTENT_BUILD, note);
-    let depth_plan = with_note(DEPTH_PROMPT, note);
-    let depth_build = with_note(DEPTH_BUILD, note);
-    let prosecution_plan = with_note(PROSECUTION_PROMPT, note);
-    let prosecution_build = with_note(PROSECUTION_BUILD, note);
-    let defense_plan = with_note(DEFENSE_PROMPT, note);
-    let defense_build = with_note(DEFENSE_BUILD, note);
-    let judgement_plan = with_note(JUDGEMENT_PROMPT, note);
-    let judgement_build = with_note(JUDGEMENT_BUILD, note);
+    let target = &artifacts.target;
+    let prompts = PhasePrompts::new(artifacts);
+    let intent_plan = with_note(&prompts.intent_plan, note);
+    let intent_build = with_note(&prompts.intent_build, note);
+    let depth_plan = with_note(&prompts.depth_plan, note);
+    let depth_build = with_note(&prompts.depth_build, note);
+    let prosecution_plan = with_note(&prompts.prosecution_plan, note);
+    let prosecution_build = with_note(&prompts.prosecution_build, note);
+    let defense_plan = with_note(&prompts.defense_plan, note);
+    let defense_build = with_note(&prompts.defense_build, note);
+    let judgement_plan = with_note(&prompts.judgement_plan, note);
+    let judgement_build = with_note(&prompts.judgement_build, note);
 
-    let intent_scan_1 = target.join(".middleton/INTENT-SCAN-1.md");
-    let intent_scan_2 = target.join(".middleton/INTENT-SCAN-2.md");
-    let prosecution_output = target.join(".middleton/PROSECUTION.md");
-    let depth_output = target.join(".middleton/DEPTH.md");
-    let defense_output = target.join(".middleton/DEFENSE.md");
-    let judgement_output = target.join(".middleton/JUDGEMENT.md");
+    let intent_scan_1 = artifacts.join("INTENT-SCAN-1.md");
+    let intent_scan_2 = artifacts.join("INTENT-SCAN-2.md");
+    let prosecution_output = artifacts.join("PROSECUTION.md");
+    let depth_output = artifacts.join("DEPTH.md");
+    let defense_output = artifacts.join("DEFENSE.md");
+    let judgement_output = artifacts.join("JUDGEMENT.md");
 
     let intent_outputs = [intent_scan_1.as_path(), intent_scan_2.as_path()];
     let depth_outputs = [depth_output.as_path()];
@@ -277,7 +280,7 @@ async fn run_pipeline(
 
     manifest.set("intent", intent_id);
     manifest.set("depth", depth_id);
-    manifest.save(target)?;
+    manifest.save(target, artifacts.agent)?;
 
     let prosecution_outputs = [prosecution_output.as_path()];
     let prosecution_id = run_phase(
@@ -291,7 +294,7 @@ async fn run_pipeline(
     )
     .await?;
     manifest.set("prosecution", prosecution_id);
-    manifest.save(target)?;
+    manifest.save(target, artifacts.agent)?;
 
     let defense_outputs = [defense_output.as_path()];
     let defense_id = run_phase(
@@ -305,7 +308,7 @@ async fn run_pipeline(
     )
     .await?;
     manifest.set("defense", defense_id);
-    manifest.save(target)?;
+    manifest.save(target, artifacts.agent)?;
 
     let judgement_outputs = [judgement_output.as_path()];
     let judgement_id = run_phase(
@@ -319,7 +322,7 @@ async fn run_pipeline(
     )
     .await?;
     manifest.set("judgement", judgement_id);
-    manifest.save(target)?;
+    manifest.save(target, artifacts.agent)?;
 
     Ok(())
 }
