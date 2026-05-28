@@ -1,0 +1,60 @@
+on: [push, pull_request]
+
+name: "Code Hygiene Suite"
+
+env:
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  RUMDL_VERSION: "0.2.2"
+
+jobs:
+  hygiene:
+    strategy:
+      matrix:
+        platform: [macos-latest, ubuntu-latest, windows-latest]
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      # - name: Install dependencies (Ubuntu only)
+      #   if: matrix.platform == 'ubuntu-latest'
+      #   run: |
+      #       sudo apt-get update
+      #       sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - name: rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Initialize Rust Cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: cargo check
+        run: cargo check
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  rumdl:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      # https://rumdl.dev/usage/ci-cd/ — pin both the action tag (@v0.2.2) and
+      # `version` input; @v0 tracks the latest action release, not the rumdl binary.
+      - uses: rvben/rumdl@v0.2.2
+        with:
+          version: ${{ env.RUMDL_VERSION }}
+          config: .rumdl.toml

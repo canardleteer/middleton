@@ -1,4 +1,5 @@
 /target
+.rumdl_cache
 
 # Local env files (API keys, etc.)
 .env
