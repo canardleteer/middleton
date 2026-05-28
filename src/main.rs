@@ -9,6 +9,7 @@ mod pdf;
 mod prompts;
 mod session;
 mod target;
+mod trial;
 
 use std::path::{Path, PathBuf};
 
@@ -151,13 +152,32 @@ async fn main() -> Result<()> {
     stop_agent_runtime(runtime).await?;
 
     pipeline_result?;
+
+    let trial_md = trial::compile(&artifacts.dir)?;
+
     if !cli.skip_pdf {
         let pdfs = pdf::export_markdown_pdfs(&artifacts.dir, &cli.pandoc)?;
-        info!(count = pdfs.len(), dir = %artifacts.dir.display(), "pdf export complete");
+        info!(
+            count = pdfs.len(),
+            dir = %artifacts.dir.display(),
+            "phase pdf export complete"
+        );
+        if let Some(ref trial_md) = trial_md {
+            let trial_pdf = pdf::export_markdown_file(&artifacts.dir, &cli.pandoc, trial_md)?;
+            info!(
+                markdown = %trial_md.display(),
+                pdf = %trial_pdf.display(),
+                "trial pdf export complete"
+            );
+        }
     }
     info!(
         target = %target.display(),
         manifest_path = %artifacts.join("sessions.json").display(),
+        trial = trial_md
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "not created".to_string()),
         "middleton complete"
     );
     Ok(())
@@ -218,7 +238,19 @@ fn run_export_pdf(middleton_dir: &Path, pandoc: &str) -> Result<()> {
     }
 
     info!(dir = %middleton_dir.display(), "exporting missing markdown pdfs");
+    let trial_md = trial::compile(middleton_dir)?;
     let pdfs = pdf::export_missing_markdown_pdfs(middleton_dir, pandoc)?;
+    if let Some(trial_md) = trial_md {
+        let trial_pdf = trial::trial_markdown_path(middleton_dir).with_extension("pdf");
+        if !trial_pdf.exists() {
+            let exported = pdf::export_markdown_file(middleton_dir, pandoc, &trial_md)?;
+            info!(
+                markdown = %trial_md.display(),
+                pdf = %exported.display(),
+                "trial pdf export complete"
+            );
+        }
+    }
     info!(
         count = pdfs.len(),
         dir = %middleton_dir.display(),

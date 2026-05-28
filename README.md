@@ -180,14 +180,21 @@ All artifacts are written to `<target>/.middleton/<agent>/`:
     ├── PROSECUTION.md      # Adversarial brief
     ├── DEFENSE.md          # Charitable brief
     ├── JUDGEMENT.md        # Middle-ground legitimacy verdict
+    ├── TRIAL.md            # Consolidated record (generated at end)
+    ├── TRIAL.pdf           # Consolidated PDF (unless --skip-pdf)
     ├── sessions.json       # Session IDs per phase
     ├── INTENT-SCAN-1.pdf   # Styled PDF export (and matching PDFs for each .md)
     └── ...
 ```
 
-After the pipeline completes, middleton runs **pandoc** on every `.md` file in
-the agent directory and writes a matching `.pdf` with numbered sections, a table of
-contents, syntax highlighting, and a styled header/footer.
+After the pipeline completes, middleton writes **`TRIAL.md`** by merging the phase
+reports in this order: Judgement, Prosecution, Defense, Depth, then any other
+markdown artifacts (for example the intent scans). Each source file is kept;
+`TRIAL.md` is an additional single-file outcome.
+
+Unless `--skip-pdf` is set, middleton then runs **pandoc** on every phase `.md`
+file and on `TRIAL.md`, writing matching `.pdf` files with numbered sections, a
+table of contents, syntax highlighting, and a styled header/footer.
 
 The target repository itself is not modified beyond the `.middleton/<agent>/` directory.
 

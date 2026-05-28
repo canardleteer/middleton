@@ -5,6 +5,8 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use tracing::{info, warn};
 
+use crate::trial;
+
 const PDF_HEADER_XELATEX: &str = include_str!("../assets/pdf/header.tex");
 const PDF_HEADER_PDFLATEX: &str = include_str!("../assets/pdf/header-pdflatex.tex");
 
@@ -14,6 +16,26 @@ pub fn export_markdown_pdfs(middleton_dir: &Path, pandoc: &str) -> Result<Vec<Pa
 
 pub fn export_missing_markdown_pdfs(middleton_dir: &Path, pandoc: &str) -> Result<Vec<PathBuf>> {
     export_markdown_pdfs_with_options(middleton_dir, pandoc, true)
+}
+
+/// Export one markdown file to PDF using the same pandoc settings as phase reports.
+pub fn export_markdown_file(
+    middleton_dir: &Path,
+    pandoc: &str,
+    markdown: &Path,
+) -> Result<PathBuf> {
+    ensure_pandoc(pandoc)?;
+
+    let header_xelatex = middleton_dir.join(".middleton-export-header.tex");
+    let header_pdflatex = middleton_dir.join(".middleton-export-header-pdflatex.tex");
+    fs::write(&header_xelatex, PDF_HEADER_XELATEX)
+        .with_context(|| format!("write pandoc header {}", header_xelatex.display()))?;
+    fs::write(&header_pdflatex, PDF_HEADER_PDFLATEX)
+        .with_context(|| format!("write pandoc header {}", header_pdflatex.display()))?;
+
+    let pdf = markdown.with_extension("pdf");
+    convert_markdown_to_pdf(pandoc, &header_xelatex, &header_pdflatex, markdown, &pdf)?;
+    Ok(pdf)
 }
 
 fn export_markdown_pdfs_with_options(
@@ -75,6 +97,7 @@ fn collect_markdown_files(middleton_dir: &Path, skip_existing: bool) -> Result<V
         .filter(|path| {
             path.extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+                && !trial::is_trial_source(path)
         })
         .filter(|path| !skip_existing || !path.with_extension("pdf").exists())
         .collect::<Vec<_>>();
@@ -184,7 +207,7 @@ fn title_from_markdown_path(path: &Path) -> String {
         .unwrap_or_else(|| "Middleton Report".to_string())
 }
 
-fn format_report_title(stem: &str) -> String {
+pub(crate) fn format_report_title(stem: &str) -> String {
     stem.split(['-', '_'])
         .filter(|part| !part.is_empty())
         .map(|part| {
