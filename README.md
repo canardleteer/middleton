@@ -6,7 +6,7 @@ The goal is not a conventional code review. Middleton asks whether a repository 
 
 ## How it works
 
-Middleton starts a scoped OpenCode server in the target directory, then runs five phases. Each phase uses a plan → build workflow: the agent plans its analysis, then writes structured markdown artifacts under `.middleton/`.
+Middleton starts a scoped OpenCode server in the target directory, then runs five phases. Each phase uses a plan → build workflow: the agent plans its analysis, then writes structured markdown artifacts under `.middleton/`. Analysis is **read-only** — middleton rejects execution permissions (bash, compile, run, etc.) and only allows writes under `.middleton/` during the build step.
 
 OpenCode sessions are preserved (not deleted) and recorded in `.middleton/sessions.json` so you can resume or inspect individual phases later.
 
@@ -80,7 +80,7 @@ middleton /path/to/repo
 Clone and review a git repository (defaults to `./<repo-name>` in the current directory):
 
 ```bash
-middleton https://github.com/org/some-repo.git
+middleton https://github.com/org/some-repo.git --note "Fork submitted for an internal security review."
 ```
 
 Clone to a specific directory:
@@ -107,6 +107,7 @@ middleton --export-pdf /path/to/repo/.middleton
 | `--pandoc` | `pandoc` | Pandoc binary used for PDF export |
 | `--skip-pdf` | — | Skip pandoc PDF export at the end |
 | `--export-pdf` | — | Export only markdown files in `DIR` that do not yet have a `.pdf` (skips the trial pipeline) |
+| `--note` | — | Additional context prepended to all analysis prompts |
 
 ## Output
 

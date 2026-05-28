@@ -17,7 +17,7 @@ use crate::opencode::{
     ensure_opencode_go_api_key, model_ref_label, opencode_go_model, start_runtime, stop_runtime,
 };
 use crate::prompts::{
-    DEFENSE_BUILD, DEFENSE_PROMPT, DEPTH_BUILD, DEPTH_PROMPT, INTENT_BUILD, INTENT_PROMPT,
+    with_note, DEFENSE_BUILD, DEFENSE_PROMPT, DEPTH_BUILD, DEPTH_PROMPT, INTENT_BUILD, INTENT_PROMPT,
     JUDGEMENT_BUILD, JUDGEMENT_PROMPT, PROSECUTION_BUILD, PROSECUTION_PROMPT,
 };
 use crate::session::run_plan_build_phase;
@@ -61,6 +61,10 @@ struct Cli {
     /// Skip pandoc PDF export at the end
     #[arg(long)]
     skip_pdf: bool,
+
+    /// Additional context about the artifact under review, prepended to all analysis prompts
+    #[arg(long)]
+    note: Option<String>,
 }
 
 #[tokio::main]
@@ -86,6 +90,7 @@ async fn main() -> Result<()> {
     info!(
         provider_model = %model_ref_label(&model),
         target = %target.display(),
+        has_note = cli.note.as_ref().is_some_and(|note| !note.trim().is_empty()),
         "starting middleton"
     );
 
@@ -97,6 +102,7 @@ async fn main() -> Result<()> {
         &target,
         &model,
         &mut manifest,
+        cli.note.as_deref(),
     )
     .await;
 
@@ -144,7 +150,19 @@ async fn run_pipeline(
     target: &PathBuf,
     model: &opencode_rs::types::project::ModelRef,
     manifest: &mut SessionManifest,
+    note: Option<&str>,
 ) -> Result<()> {
+    let intent_plan = with_note(INTENT_PROMPT, note);
+    let intent_build = with_note(INTENT_BUILD, note);
+    let depth_plan = with_note(DEPTH_PROMPT, note);
+    let depth_build = with_note(DEPTH_BUILD, note);
+    let prosecution_plan = with_note(PROSECUTION_PROMPT, note);
+    let prosecution_build = with_note(PROSECUTION_BUILD, note);
+    let defense_plan = with_note(DEFENSE_PROMPT, note);
+    let defense_build = with_note(DEFENSE_BUILD, note);
+    let judgement_plan = with_note(JUDGEMENT_PROMPT, note);
+    let judgement_build = with_note(JUDGEMENT_BUILD, note);
+
     let intent_scan_1 = target.join(".middleton/INTENT-SCAN-1.md");
     let intent_scan_2 = target.join(".middleton/INTENT-SCAN-2.md");
     let prosecution_output = target.join(".middleton/PROSECUTION.md");
@@ -159,16 +177,16 @@ async fn run_pipeline(
         run_plan_build_phase(
             client,
             "intent",
-            INTENT_PROMPT,
-            INTENT_BUILD,
+            &intent_plan,
+            &intent_build,
             model,
             &intent_outputs,
         ),
         run_plan_build_phase(
             client,
             "depth",
-            DEPTH_PROMPT,
-            DEPTH_BUILD,
+            &depth_plan,
+            &depth_build,
             model,
             &depth_outputs,
         ),
@@ -182,8 +200,8 @@ async fn run_pipeline(
     let prosecution_id = run_plan_build_phase(
         client,
         "prosecution",
-        PROSECUTION_PROMPT,
-        PROSECUTION_BUILD,
+        &prosecution_plan,
+        &prosecution_build,
         model,
         &prosecution_outputs,
     )
@@ -195,8 +213,8 @@ async fn run_pipeline(
     let defense_id = run_plan_build_phase(
         client,
         "defense",
-        DEFENSE_PROMPT,
-        DEFENSE_BUILD,
+        &defense_plan,
+        &defense_build,
         model,
         &defense_outputs,
     )
@@ -208,8 +226,8 @@ async fn run_pipeline(
     let judgement_id = run_plan_build_phase(
         client,
         "judgement",
-        JUDGEMENT_PROMPT,
-        JUDGEMENT_BUILD,
+        &judgement_plan,
+        &judgement_build,
         model,
         &judgement_outputs,
     )
