@@ -5,9 +5,6 @@ on:
 
 name: "Markdown Hygiene"
 
-env:
-  RUMDL_VERSION: "0.2.2"
-
 jobs:
   rumdl:
     runs-on: ubuntu-latest
@@ -21,5 +18,4 @@ jobs:
       # `version` input; @v0 tracks the latest action release, not the rumdl binary.
       - uses: rvben/rumdl@v0.2.2
         with:
-          version: ${{ env.RUMDL_VERSION }}
           config: .rumdl.toml
