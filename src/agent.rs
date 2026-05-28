@@ -6,6 +6,8 @@ pub enum AgentKind {
     OpenCode,
     #[value(name = "claudecode")]
     ClaudeCode,
+    #[value(name = "codex")]
+    Codex,
 }
 
 impl AgentKind {
@@ -13,6 +15,7 @@ impl AgentKind {
         match self {
             Self::OpenCode => "opencode",
             Self::ClaudeCode => "claudecode",
+            Self::Codex => "codex",
         }
     }
 }

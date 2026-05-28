@@ -9,8 +9,9 @@
 > [Youtube Channel](https://www.youtube.com/channel/UCS8gM5S889oBPyN6K07ZC6A/streams)
 
 **middleton** is a Rust CLI that runs a structured, multi-phase review of a git
-repository or local directory. It uses [OpenCode](https://opencode.ai) or
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents to examine
+repository or local directory. It uses [OpenCode](https://opencode.ai),
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code), or
+[Codex](https://github.com/openai/codex) agents to examine
 an artifact corpus — code, docs, proofs, CI, papers — and produce a trial-style
 analysis: adversarial prosecution, charitable defense, and a middle-ground
 legitimacy verdict.
@@ -38,6 +39,7 @@ implementation versus narrative hype.
     (OpenCode Go / `opencode-go`, not OpenCode Zen)
   - **Claude Code**: `claude` on your `PATH` with Claude Code authentication
     configured
+  - **Codex**: `codex` on your `PATH` with Codex authentication configured
 - **pandoc** on your `PATH` for PDF export (or pass `--skip-pdf` to skip)
 - **PDF engine**: **xelatex** recommended; middleton falls back to **pdflatex**
   if xelatex is unavailable
@@ -45,7 +47,7 @@ implementation versus narrative hype.
 ## How it works
 
 Middleton runs five analysis phases against the target directory using either
-OpenCode or Claude Code. Each phase uses a plan → build workflow: the agent plans
+OpenCode, Claude Code, or Codex. Each phase uses a plan → build workflow: the agent plans
 its analysis, then writes structured markdown artifacts under `.middleton/`.
 Analysis is **read-only** — middleton rejects execution permissions (bash,
 compile, run, etc.) and only allows writes under `.middleton/` during the build
@@ -120,6 +122,12 @@ Review with Claude Code instead:
 middleton /path/to/repo --agent claudecode --model sonnet
 ```
 
+Review with Codex instead:
+
+```bash
+middleton /path/to/repo --agent codex
+```
+
 Clone and review a git repository (defaults to `./<repo-name>` in the current directory):
 
 ```bash
@@ -144,11 +152,12 @@ middleton --export-pdf /path/to/repo/.middleton
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--output`, `-o` | `./<repo-name>` | Clone destination when input is a git URL |
-| `--agent` | `opencode` | Agent backend: `opencode` or `claudecode` |
-| `--model` | `kimi-k2.5` | OpenCode Go catalog model id, or `sonnet` / `opus` / `haiku` for Claude Code |
+| `--agent` | `opencode` | Agent backend: `opencode`, `claudecode`, or `codex` |
+| `--model` | `kimi-k2.5` | OpenCode Go catalog model id, `sonnet` / `opus` / `haiku` for Claude Code, or a Codex model id |
 | `--hostname` | `127.0.0.1` | OpenCode server bind hostname |
 | `--opencode` | `opencode` | Path to the OpenCode binary |
 | `--claude` | `claude` | Path to the Claude Code binary |
+| `--codex` | `codex` | Path to the Codex CLI binary |
 | `--log-level` | `info` | Log filter (`RUST_LOG`-style; overridden by `RUST_LOG` if set) |
 | `--pandoc` | `pandoc` | Pandoc binary used for PDF export |
 | `--skip-pdf` | — | Skip pandoc PDF export at the end |

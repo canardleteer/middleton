@@ -1,7 +1,9 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use claudecode::{Client, Model, PermissionMode, SessionConfig};
+use claude_codes::{
+    AsyncClient, ClaudeCliBuilder, ClaudeOutput, PermissionMode, io::ResultMessage,
+};
 use tracing::{info, warn};
 
 use crate::output::{
@@ -12,88 +14,73 @@ use crate::output::{
 const READ_ONLY_TOOLS: &[&str] = &["Bash", "WebFetch", "WebSearch"];
 const MAX_BUILD_ATTEMPTS: u32 = 3;
 
+struct StepRequest<'a> {
+    claude_bin: &'a str,
+    prompt: &'a str,
+    target: &'a Path,
+    model: &'a str,
+    permission_mode: PermissionMode,
+    resume_session_id: Option<&'a str>,
+    phase: &'a str,
+    step: &'a str,
+}
+
 pub struct ClaudeCodeRuntime {
-    pub client: Client,
+    pub claude_bin: String,
 }
 
 pub async fn start_runtime(claude_bin: &str) -> Result<ClaudeCodeRuntime> {
-    let client = if claude_bin == "claude" {
-        Client::new().await.context("create Claude Code client")?
-    } else {
-        Client::with_path(claude_bin)
-            .await
-            .with_context(|| format!("create Claude Code client at {claude_bin}"))?
-    };
-
-    Ok(ClaudeCodeRuntime { client })
+    Ok(ClaudeCodeRuntime {
+        claude_bin: claude_bin.to_string(),
+    })
 }
 
-pub fn parse_model(model: &str) -> Model {
+pub fn parse_model(model: &str) -> &'static str {
     match model.trim().to_ascii_lowercase().as_str() {
-        "opus" => Model::Opus,
-        "haiku" => Model::Haiku,
-        "sonnet" => Model::Sonnet,
+        "opus" => "opus",
+        "haiku" => "haiku",
+        "sonnet" => "sonnet",
         other => {
             warn!(
                 model = other,
-                "using Claude Code sonnet model; claudecode accepts sonnet, opus, or haiku"
+                "using Claude Code sonnet model; claude-codes accepts sonnet, opus, or haiku"
             );
-            Model::Sonnet
+            "sonnet"
         }
     }
 }
 
-pub fn model_label(model: Model) -> &'static str {
-    match model {
-        Model::Sonnet => "sonnet",
-        Model::Opus => "opus",
-        Model::Haiku => "haiku",
-    }
+pub fn model_label(model: &str) -> &str {
+    model
 }
 
 pub async fn run_plan_build_phase(
-    client: &Client,
+    runtime: &ClaudeCodeRuntime,
     phase: &str,
     plan_prompt: &str,
     build_prompt: &str,
-    model: Model,
+    model: &str,
     target: &Path,
     expected_outputs: &[&Path],
 ) -> Result<String> {
-    info!(phase, agent = "claudecode", "starting plan step");
-    let plan_config = build_config(
-        plan_prompt,
+    info!(phase, agent = "claude-codes", "starting plan step");
+    let (session_id, _) = run_step(StepRequest {
+        claude_bin: &runtime.claude_bin,
+        prompt: plan_prompt,
         target,
         model,
-        PermissionMode::Plan,
-        None,
+        permission_mode: PermissionMode::Plan,
+        resume_session_id: None,
         phase,
-        "plan",
-    )?;
-
-    let plan_result = client
-        .launch_and_wait(plan_config)
-        .await
-        .with_context(|| format!("run claudecode plan step for {phase}"))?;
-
-    if plan_result.is_error {
-        bail!(
-            "claudecode plan step failed for {phase}: {}",
-            plan_result
-                .error
-                .or(plan_result.content)
-                .unwrap_or_else(|| "unknown error".to_string())
-        );
-    }
-
-    let session_id = plan_result
-        .session_id
-        .context("claudecode plan step did not return a session id")?;
+        step: "plan",
+    })
+    .await
+    .with_context(|| format!("run claude-codes plan step for {phase}"))?;
 
     info!(phase, session_id = %session_id, "plan step complete");
 
     ensure_build_outputs(
-        client,
+        &runtime.claude_bin,
         phase,
         build_prompt,
         model,
@@ -114,10 +101,10 @@ pub async fn run_plan_build_phase(
 }
 
 async fn ensure_build_outputs(
-    client: &Client,
+    claude_bin: &str,
     phase: &str,
     build_prompt: &str,
-    model: Model,
+    model: &str,
     target: &Path,
     session_id: &str,
     expected_outputs: &[&Path],
@@ -126,30 +113,18 @@ async fn ensure_build_outputs(
 
     for attempt in 1..=MAX_BUILD_ATTEMPTS {
         info!(phase, session_id = %session_id, attempt, "starting build step");
-        let build_config = build_config(
-            &prompt,
+        run_step(StepRequest {
+            claude_bin,
+            prompt: &prompt,
             target,
             model,
-            PermissionMode::AcceptEdits,
-            Some(session_id),
+            permission_mode: PermissionMode::AcceptEdits,
+            resume_session_id: Some(session_id),
             phase,
-            "build",
-        )?;
-
-        let build_result = client
-            .launch_and_wait(build_config)
-            .await
-            .with_context(|| format!("run claudecode build step for {phase}"))?;
-
-        if build_result.is_error {
-            bail!(
-                "claudecode build step failed for {phase}: {}",
-                build_result
-                    .error
-                    .or(build_result.content)
-                    .unwrap_or_else(|| "unknown error".to_string())
-            );
-        }
+            step: "build",
+        })
+        .await
+        .with_context(|| format!("run claude-codes build step for {phase}"))?;
 
         let _ = settle_outputs(expected_outputs).await;
 
@@ -171,33 +146,91 @@ async fn ensure_build_outputs(
     verify_outputs(expected_outputs, phase)
 }
 
-fn build_config(
-    prompt: &str,
-    target: &Path,
-    model: Model,
-    permission_mode: PermissionMode,
-    session_id: Option<&str>,
-    phase: &str,
-    step: &str,
-) -> Result<SessionConfig> {
-    let mut builder = SessionConfig::builder(prompt)
-        .working_dir(target)
+async fn run_step(req: StepRequest<'_>) -> Result<(String, Vec<ClaudeOutput>)> {
+    let StepRequest {
+        claude_bin,
+        prompt,
+        target,
+        model,
+        permission_mode,
+        resume_session_id,
+        phase,
+        step,
+    } = req;
+
+    let mut builder = ClaudeCliBuilder::new()
+        .command(claude_bin)
         .model(model)
         .permission_mode(permission_mode)
         .disallowed_tools(
             READ_ONLY_TOOLS
                 .iter()
                 .map(|tool| (*tool).to_string())
-                .collect(),
-        );
+                .collect::<Vec<_>>(),
+        )
+        .add_directories([target]);
 
-    if let Some(session_id) = session_id {
-        builder = builder.resume_session_id(session_id);
+    if let Some(session_id) = resume_session_id {
+        builder = builder.resume(Some(session_id.to_string()));
     }
 
-    builder
-        .build()
-        .with_context(|| format!("build claudecode {step} config for {phase}"))
+    let mut cmd = builder
+        .build_command()
+        .with_context(|| format!("build claude-codes {step} command for {phase}"))?;
+    cmd.current_dir(target);
+
+    let child = cmd
+        .spawn()
+        .with_context(|| format!("spawn claude-codes {step} process for {phase}"))?;
+
+    let mut client = AsyncClient::new(child)
+        .with_context(|| format!("create claude-codes {step} client for {phase}"))?;
+
+    let responses = client
+        .query(prompt)
+        .await
+        .with_context(|| format!("run claude-codes {step} query for {phase}"))?;
+
+    if let Some(err) = responses.iter().find_map(|o| o.as_anthropic_error()) {
+        bail!(
+            "claude-codes {step} step failed for {phase}: {}",
+            err.error.message
+        );
+    }
+
+    let result = responses
+        .iter()
+        .rev()
+        .find_map(ClaudeOutput::as_result)
+        .with_context(|| format!("claude-codes {step} step did not return a result for {phase}"))?;
+
+    if result.is_error {
+        bail!(
+            "claude-codes {step} step failed for {phase}: {}",
+            result_error_message(result)
+        );
+    }
+
+    let session_id = responses
+        .iter()
+        .rev()
+        .find_map(|o| o.session_id().map(str::to_string))
+        .or_else(|| Some(result.session_id.clone()))
+        .with_context(|| {
+            format!("claude-codes {step} step did not return a session id for {phase}")
+        })?;
+
+    Ok((session_id, responses))
+}
+
+fn result_error_message(result: &ResultMessage) -> String {
+    if !result.errors.is_empty() {
+        return result.errors.join("; ");
+    }
+    result
+        .result
+        .clone()
+        .unwrap_or_else(|| "unknown error".to_string())
 }
 
 #[cfg(test)]
@@ -206,9 +239,9 @@ mod tests {
 
     #[test]
     fn parse_model_accepts_known_values() {
-        assert_eq!(parse_model("opus"), Model::Opus);
-        assert_eq!(parse_model("Haiku"), Model::Haiku);
-        assert_eq!(parse_model("sonnet"), Model::Sonnet);
-        assert_eq!(parse_model("kimi-k2.5"), Model::Sonnet);
+        assert_eq!(parse_model("opus"), "opus");
+        assert_eq!(parse_model("Haiku"), "haiku");
+        assert_eq!(parse_model("sonnet"), "sonnet");
+        assert_eq!(parse_model("kimi-k2.5"), "sonnet");
     }
 }

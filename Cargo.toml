@@ -8,7 +8,6 @@ authors = ["canardleteer"]
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-claudecode = "0.1.20"
 # HTTPS/SSH cloning via libgit2 + OpenSSL; see [features] for vendored TLS.
 git2 = "0.20"
 opencode_rs = { version = "0.11.1", features = ["http", "sse", "server"] }
@@ -19,6 +18,8 @@ tracing = "0.1"
 env_logger = "0.11"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
+claude-codes = { version = "2.1", default-features = false, features = ["async-client"] }
+codex-codes = { version = "0.129", default-features = false, features = ["async-client"] }
 
 # git2 defaults to system libgit2/OpenSSL, which often fails when dev headers or
 # versions mismatch. vendored-git bundles both for a self-contained build (still
