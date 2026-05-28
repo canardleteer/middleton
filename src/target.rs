@@ -2,8 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use git2::Repository;
 use git2::build::RepoBuilder;
-use git2::{Repository};
 use url::Url;
 
 pub fn resolve_target(input: &str, output: &Option<PathBuf>) -> Result<PathBuf> {
@@ -21,9 +21,7 @@ pub fn resolve_target(input: &str, output: &Option<PathBuf>) -> Result<PathBuf> 
         return clone_or_reuse(input, &dest);
     }
 
-    bail!(
-        "input is neither an existing directory nor a git URL: {input}"
-    );
+    bail!("input is neither an existing directory nor a git URL: {input}");
 }
 
 fn clone_or_reuse(url: &str, dest: &Path) -> Result<PathBuf> {
@@ -66,8 +64,8 @@ fn clone_or_reuse(url: &str, dest: &Path) -> Result<PathBuf> {
 }
 
 fn directory_is_empty(path: &Path) -> Result<bool> {
-    let mut entries = fs::read_dir(path)
-        .with_context(|| format!("read clone destination {}", path.display()))?;
+    let mut entries =
+        fs::read_dir(path).with_context(|| format!("read clone destination {}", path.display()))?;
     Ok(entries.next().is_none())
 }
 
@@ -91,10 +89,7 @@ fn clone_destination(output: &Option<PathBuf>, url: &str) -> Result<PathBuf> {
 
 fn repo_name_from_url(url: &str) -> Result<String> {
     if url.starts_with("git@") {
-        let path = url
-            .split(':')
-            .nth(1)
-            .context("parse scp-style git URL")?;
+        let path = url.split(':').nth(1).context("parse scp-style git URL")?;
         return basename_without_git(path);
     }
 
@@ -138,10 +133,7 @@ mod tests {
 
     #[test]
     fn directory_is_empty_detects_entries() {
-        let dir = std::env::temp_dir().join(format!(
-            "middleton-empty-test-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("middleton-empty-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         assert!(directory_is_empty(&dir).unwrap());

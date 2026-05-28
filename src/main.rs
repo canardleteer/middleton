@@ -15,20 +15,25 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use crate::agent::AgentKind;
-use crate::claude_agent::{ClaudeCodeRuntime, model_label as claude_model_label, parse_model as claude_model};
+use crate::claude_agent::{
+    ClaudeCodeRuntime, model_label as claude_model_label, parse_model as claude_model,
+};
 use crate::manifest::SessionManifest;
 use crate::opencode::{
     OpenCodeRuntime, ensure_opencode_go_api_key, model_ref_label, opencode_go_model, start_runtime,
     stop_runtime,
 };
 use crate::prompts::{
-    with_note, DEFENSE_BUILD, DEFENSE_PROMPT, DEPTH_BUILD, DEPTH_PROMPT, INTENT_BUILD, INTENT_PROMPT,
-    JUDGEMENT_BUILD, JUDGEMENT_PROMPT, PROSECUTION_BUILD, PROSECUTION_PROMPT,
+    DEFENSE_BUILD, DEFENSE_PROMPT, DEPTH_BUILD, DEPTH_PROMPT, INTENT_BUILD, INTENT_PROMPT,
+    JUDGEMENT_BUILD, JUDGEMENT_PROMPT, PROSECUTION_BUILD, PROSECUTION_PROMPT, with_note,
 };
 use crate::session::run_plan_build_phase as run_opencode_plan_build_phase;
 
 #[derive(Parser)]
-#[command(name = "middleton", about = "Run prosecution/defense/judgement review via OpenCode or Claude Code")]
+#[command(
+    name = "middleton",
+    about = "Run prosecution/defense/judgement review via OpenCode or Claude Code"
+)]
 struct Cli {
     /// Local directory or git repository URL
     #[arg(required_unless_present = "export_pdf")]
@@ -81,7 +86,7 @@ struct Cli {
 }
 
 enum AgentRuntime {
-    OpenCode(OpenCodeRuntime),
+    OpenCode(Box<OpenCodeRuntime>),
     ClaudeCode(ClaudeCodeRuntime),
 }
 
@@ -118,7 +123,14 @@ async fn main() -> Result<()> {
     let runtime = start_agent_runtime(&target, &cli).await?;
     let mut manifest = SessionManifest::load_or_default(&target)?;
 
-    let pipeline_result = run_pipeline(&runtime, &target, &cli.model, &mut manifest, cli.note.as_deref()).await;
+    let pipeline_result = run_pipeline(
+        &runtime,
+        &target,
+        &cli.model,
+        &mut manifest,
+        cli.note.as_deref(),
+    )
+    .await;
 
     if pipeline_result.is_err() {
         let _ = manifest.save(&target);
@@ -148,7 +160,7 @@ async fn start_agent_runtime(target: &Path, cli: &Cli) -> Result<AgentRuntime> {
                 provider_model = %model_ref_label(&opencode_go_model(&cli.model)),
                 "OpenCode server started"
             );
-            Ok(AgentRuntime::OpenCode(runtime))
+            Ok(AgentRuntime::OpenCode(Box::new(runtime)))
         }
         AgentKind::ClaudeCode => {
             let runtime = claude_agent::start_runtime(&cli.claude).await?;
@@ -174,7 +186,7 @@ async fn stop_agent_runtime(runtime: AgentRuntime) -> Result<()> {
     Ok(())
 }
 
-fn run_export_pdf(middleton_dir: &PathBuf, pandoc: &str) -> Result<()> {
+fn run_export_pdf(middleton_dir: &Path, pandoc: &str) -> Result<()> {
     if !middleton_dir.is_dir() {
         bail!(
             "--export-pdf path is not a directory: {}",
@@ -194,7 +206,7 @@ fn run_export_pdf(middleton_dir: &PathBuf, pandoc: &str) -> Result<()> {
 
 async fn run_pipeline(
     runtime: &AgentRuntime,
-    target: &PathBuf,
+    target: &Path,
     model: &str,
     manifest: &mut SessionManifest,
     note: Option<&str>,

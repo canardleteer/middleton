@@ -272,11 +272,13 @@ pub fn with_note(prompt: &str, note: Option<&str>) -> String {
 
     format!(
         "## Additional context from the reviewer\n\
-{note}\n\n\
+> {note}\n\n \
+\
 Treat this as background supplied by the person requesting the analysis. It may explain \
 provenance, circumstances, or intent surrounding the artifact under review. Use it to \
-inform interpretation, but do not treat it as evidence inside the repository unless \
-corroborated by the corpus itself.\n\n\
+inform interpretation, but do not treat it as evidence inside the repository\n\n \
+\
+## Analysis prompt
 {prompt}"
     )
 }

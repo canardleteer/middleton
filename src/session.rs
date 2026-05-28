@@ -46,10 +46,24 @@ pub async fn run_plan_build_phase(
         .with_context(|| format!("subscribe to session events for {phase}"))?;
 
     send_prompt(client, &session.id, plan_prompt, model, "plan").await?;
-    wait_until_idle(client, &session.id, &mut subscription, SessionStep::Plan, true).await?;
+    wait_until_idle(
+        client,
+        &session.id,
+        &mut subscription,
+        SessionStep::Plan,
+        true,
+    )
+    .await?;
 
     send_prompt(client, &session.id, build_prompt, model, "build").await?;
-    wait_until_idle(client, &session.id, &mut subscription, SessionStep::Build, true).await?;
+    wait_until_idle(
+        client,
+        &session.id,
+        &mut subscription,
+        SessionStep::Build,
+        true,
+    )
+    .await?;
 
     for output in expected_outputs {
         verify_output(output, phase)?;
@@ -243,14 +257,10 @@ async fn handle_pending_interactions(
     session_id: &str,
     step: SessionStep,
 ) -> Result<bool> {
-    let permissions = client
-        .permissions()
-        .list()
-        .await
-        .unwrap_or_else(|error| {
-            warn!(session_id, %error, "failed to list permissions");
-            Vec::new()
-        });
+    let permissions = client.permissions().list().await.unwrap_or_else(|error| {
+        warn!(session_id, %error, "failed to list permissions");
+        Vec::new()
+    });
 
     if let Some(permission) = permissions
         .into_iter()
@@ -260,14 +270,10 @@ async fn handle_pending_interactions(
         return Ok(true);
     }
 
-    let questions = client
-        .question()
-        .list()
-        .await
-        .unwrap_or_else(|error| {
-            warn!(session_id, %error, "failed to list questions");
-            Vec::new()
-        });
+    let questions = client.question().list().await.unwrap_or_else(|error| {
+        warn!(session_id, %error, "failed to list questions");
+        Vec::new()
+    });
 
     if let Some(question) = questions
         .into_iter()
@@ -340,9 +346,9 @@ fn permission_reply(request: &PermissionRequest, step: SessionStep) -> Permissio
             }
         }
         SessionStep::Build => {
-            if is_write_permission(&permission) && writes_middleton_only(&request.patterns) {
-                PermissionReply::Once
-            } else if is_read_permission(&permission) {
+            if (is_write_permission(&permission) && writes_middleton_only(&request.patterns))
+                || is_read_permission(&permission)
+            {
                 PermissionReply::Once
             } else {
                 PermissionReply::Reject
@@ -395,12 +401,7 @@ async fn reply_question(
 
     client
         .question()
-        .reply(
-            &question.id,
-            &QuestionReply {
-                answers,
-            },
-        )
+        .reply(&question.id, &QuestionReply { answers })
         .await
         .with_context(|| format!("reply to question request {}", question.id))?;
 
@@ -428,7 +429,10 @@ mod tests {
             id: "req-1".to_string(),
             session_id: "sess-1".to_string(),
             permission: permission.to_string(),
-            patterns: patterns.iter().map(|pattern| (*pattern).to_string()).collect(),
+            patterns: patterns
+                .iter()
+                .map(|pattern| (*pattern).to_string())
+                .collect(),
             metadata: None,
             always: Vec::new(),
             tool: None,
@@ -468,7 +472,10 @@ mod tests {
             PermissionReply::Once
         );
         assert_eq!(
-            permission_reply(&request("file.write", &["/repo/src/main.rs"]), SessionStep::Build),
+            permission_reply(
+                &request("file.write", &["/repo/src/main.rs"]),
+                SessionStep::Build
+            ),
             PermissionReply::Reject
         );
     }
