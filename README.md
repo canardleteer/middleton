@@ -113,6 +113,74 @@ cargo build --release
 
 The binary is written to `target/release/middleton`.
 
+## Docker
+
+> [!WARNING]
+> Docker images and `compose.yaml` are **not fully tested** — not in CI, and not
+> manually across every agent platform. We don't hold accounts on all backends and
+> wouldn't pay to run full end-to-end trials against each one. Treat this path as
+> experimental; expect breakage.
+
+Images bundle the `middleton` binary, pandoc/TeX for PDF export, and one agent
+backend per runtime target. See [`Dockerfile`](Dockerfile) for build stages and
+[`compose.yaml`](compose.yaml) for service definitions.
+
+### Build
+
+Plain `docker build` produces the **OpenCode** runtime (default target):
+
+```bash
+docker build -t middleton:opencode .
+```
+
+Other agent runtimes:
+
+```bash
+docker build --target codex-runtime -t middleton:codex .
+docker build --target claude-runtime -t middleton:claude .
+```
+
+Overridable build args include `RUST_VERSION` (default `1.96.0`),
+`DEBIAN_VERSION` (default `trixie`), `OPENCODE_VERSION` (default `v1.15.12`),
+`CODEX_VERSION` (default `0.135.0`), and `CLAUDE_VERSION` (default `stable`).
+
+### Compose
+
+Three services map to the three runtime targets. The intended workflow is
+`docker compose run`:
+
+```bash
+cp .env.opencode.token.example .env.opencode.token
+# edit .env.opencode.token — set OPENCODE_API_KEY
+
+docker compose run --rm middleton-opencode /workspace/my-repo
+docker compose run --rm middleton-codex https://github.com/org/repo.git
+docker compose run --rm middleton-claude /workspace/my-repo --model sonnet
+```
+
+Build args from the Dockerfile can be overridden in a root `.env` file (or the
+shell environment) when running `docker compose build`:
+
+| Variable | Default | Used by |
+|----------|---------|---------|
+| `RUST_VERSION` | `1.96.0` | all services |
+| `DEBIAN_VERSION` | `trixie` | all services |
+| `OPENCODE_VERSION` | `v1.15.12` | `middleton-opencode` |
+| `CODEX_VERSION` | `0.135.0` | `middleton-codex` |
+| `CLAUDE_VERSION` | `stable` | `middleton-claude` |
+
+Token files (git-ignored):
+
+| File | Variable |
+|------|----------|
+| `.env.opencode.token` | `OPENCODE_API_KEY` |
+| `.env.codex.token` | `OPENAI_API_KEY` |
+| `.env.claude.token` | `ANTHROPIC_API_KEY` |
+
+Persistent storage defaults to the `middleton-data` named volume mounted at
+`/workspace`. Override with a host path via `MIDDLETON_STORAGE` in a root
+`.env` file (for example `MIDDLETON_STORAGE=./data`).
+
 ## Usage
 
 Review a local directory with OpenCode:
