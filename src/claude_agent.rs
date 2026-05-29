@@ -3,9 +3,9 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use claude_codes::{
-    AsyncClient, ClaudeCliBuilder, ClaudeInput, ClaudeOutput, ContentBlock,
-    ControlRequestPayload, ControlResponse, PermissionMode, ToolPermissionRequest,
-    ToolResultBlock, ToolResultContent, io::ResultMessage,
+    AsyncClient, ClaudeCliBuilder, ClaudeInput, ClaudeOutput, ContentBlock, ControlRequestPayload,
+    ControlResponse, PermissionMode, ToolPermissionRequest, ToolResultBlock, ToolResultContent,
+    io::ResultMessage,
 };
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -213,7 +213,9 @@ async fn run_step(req: StepRequest<'_>) -> Result<(String, Vec<ClaudeOutput>)> {
         .iter()
         .rev()
         .find_map(ClaudeOutput::as_result)
-        .with_context(|| format!("claude-codes {step:?} step did not return a result for {phase}"))?;
+        .with_context(|| {
+            format!("claude-codes {step:?} step did not return a result for {phase}")
+        })?;
 
     if result.is_error {
         bail!(
@@ -255,7 +257,10 @@ async fn query_with_control_handling(
     let mut responses = Vec::new();
     let mut active_session = session_id;
     loop {
-        let output = client.receive().await.context("receive claude-codes message")?;
+        let output = client
+            .receive()
+            .await
+            .context("receive claude-codes message")?;
 
         if let Some(session) = output_session_id(&output) {
             active_session = session;
@@ -324,9 +329,7 @@ fn output_session_id(output: &ClaudeOutput) -> Option<Uuid> {
             .get("session_id")
             .and_then(|value| value.as_str())
             .and_then(|id| Uuid::parse_str(id).ok()),
-        _ => output
-            .session_id()
-            .and_then(|id| Uuid::parse_str(id).ok()),
+        _ => output.session_id().and_then(|id| Uuid::parse_str(id).ok()),
     }
 }
 
@@ -354,7 +357,11 @@ fn tool_result_text(result: &ToolResultBlock) -> Option<String> {
                 .filter_map(|value| value.as_str())
                 .collect::<Vec<_>>()
                 .join(" ");
-            if joined.is_empty() { None } else { Some(joined) }
+            if joined.is_empty() {
+                None
+            } else {
+                Some(joined)
+            }
         }
         None => None,
     }
@@ -442,10 +449,7 @@ fn permission_response(
                     request_id,
                 ));
             }
-            Ok(perm.deny(
-                "tool not permitted during middleton build step",
-                request_id,
-            ))
+            Ok(perm.deny("tool not permitted during middleton build step", request_id))
         }
     }
 }
@@ -598,7 +602,8 @@ mod tests {
         let ClaudeOutput::User(user) = output else {
             panic!("expected user message");
         };
-        let reply = interactive_follow_up(&user.message.content, StepKind::Plan).expect("follow-up");
+        let reply =
+            interactive_follow_up(&user.message.content, StepKind::Plan).expect("follow-up");
         assert!(reply.to_ascii_lowercase().contains("exit plan mode"));
     }
 
