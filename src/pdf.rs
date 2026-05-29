@@ -106,6 +106,28 @@ fn collect_markdown_files(middleton_dir: &Path, skip_existing: bool) -> Result<V
     Ok(files)
 }
 
+/// Replace control characters that break LaTeX/pdf engines with visible escapes.
+fn sanitize_markdown_for_latex(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '\t' | '\n' | '\r' => out.push(ch),
+            c if c.is_control() => out.push_str(&control_char_escape(c)),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn control_char_escape(ch: char) -> String {
+    let code = ch as u32;
+    if code <= 0xFF {
+        format!("\\x{code:02x}")
+    } else {
+        format!("\\u{{{code:x}}}")
+    }
+}
+
 fn convert_markdown_to_pdf(
     pandoc: &str,
     header_xelatex: &Path,
@@ -114,10 +136,20 @@ fn convert_markdown_to_pdf(
     pdf: &Path,
 ) -> Result<()> {
     let title = title_from_markdown_path(markdown);
+    let raw = fs::read_to_string(markdown)
+        .with_context(|| format!("read markdown {}", markdown.display()))?;
+    let sanitized = sanitize_markdown_for_latex(&raw);
+    let sanitized_markdown = markdown.with_extension("md.middleton-export");
+    fs::write(&sanitized_markdown, &sanitized).with_context(|| {
+        format!(
+            "write sanitized markdown {}",
+            sanitized_markdown.display()
+        )
+    })?;
 
     let mut command = Command::new(pandoc);
     command
-        .arg(markdown)
+        .arg(&sanitized_markdown)
         .arg("-o")
         .arg(pdf)
         .arg("--standalone")
@@ -148,6 +180,7 @@ fn convert_markdown_to_pdf(
         .with_context(|| format!("run pandoc for {}", markdown.display()))?;
 
     if output.status.success() {
+        let _ = fs::remove_file(&sanitized_markdown);
         return Ok(());
     }
 
@@ -159,7 +192,7 @@ fn convert_markdown_to_pdf(
 
     let mut fallback = Command::new(pandoc);
     fallback
-        .arg(markdown)
+        .arg(&sanitized_markdown)
         .arg("-o")
         .arg(pdf)
         .arg("--standalone")
@@ -190,10 +223,12 @@ fn convert_markdown_to_pdf(
         .with_context(|| format!("run pandoc fallback for {}", markdown.display()))?;
 
     if fallback_output.status.success() {
+        let _ = fs::remove_file(&sanitized_markdown);
         return Ok(());
     }
 
     let fallback_stderr = String::from_utf8_lossy(&fallback_output.stderr);
+    let _ = fs::remove_file(&sanitized_markdown);
     bail!(
         "failed to export {} to PDF\nxelatex: {stderr}\npdflatex: {fallback_stderr}",
         markdown.display()
@@ -230,6 +265,21 @@ mod tests {
     fn formats_report_titles() {
         assert_eq!(format_report_title("INTENT-SCAN-1"), "Intent Scan 1");
         assert_eq!(format_report_title("JUDGEMENT"), "Judgement");
+    }
+
+    #[test]
+    fn sanitizes_control_characters_for_latex() {
+        let input = "magic bytes (ELF `\u{7f}ELF`)";
+        let sanitized = sanitize_markdown_for_latex(input);
+        assert!(!sanitized.contains('\u{7f}'));
+        assert!(sanitized.contains(r"\x7f"));
+        assert_eq!(sanitized, "magic bytes (ELF `\\x7fELF`)");
+    }
+
+    #[test]
+    fn preserves_tabs_and_newlines_when_sanitizing() {
+        let input = "line one\nline two\tindented";
+        assert_eq!(sanitize_markdown_for_latex(input), input);
     }
 
     #[test]

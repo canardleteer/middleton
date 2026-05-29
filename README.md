@@ -33,6 +33,10 @@ implementation versus narrative hype.
 
 ## Requirements
 
+> [!WARNING]
+> **Codex** and **Claude Code** support is questionable compared to **OpenCode**.
+> OpenCode is the default and best-tested backend.
+
 - **Rust** toolchain (2024 edition; build with `cargo build --release`)
 - **One agent backend:**
   - **OpenCode** (default): `opencode` on your `PATH` and **`OPENCODE_API_KEY`**
