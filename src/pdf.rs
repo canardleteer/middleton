@@ -140,12 +140,8 @@ fn convert_markdown_to_pdf(
         .with_context(|| format!("read markdown {}", markdown.display()))?;
     let sanitized = sanitize_markdown_for_latex(&raw);
     let sanitized_markdown = markdown.with_extension("md.middleton-export");
-    fs::write(&sanitized_markdown, &sanitized).with_context(|| {
-        format!(
-            "write sanitized markdown {}",
-            sanitized_markdown.display()
-        )
-    })?;
+    fs::write(&sanitized_markdown, &sanitized)
+        .with_context(|| format!("write sanitized markdown {}", sanitized_markdown.display()))?;
 
     let mut command = Command::new(pandoc);
     command
