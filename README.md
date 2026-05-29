@@ -8,7 +8,7 @@
 > of a "theater" trial court (like this codebase puts on), a good show either way:
 > [Youtube Channel](https://www.youtube.com/channel/UCS8gM5S889oBPyN6K07ZC6A/streams)
 
-**middleton** is a Rust CLI that runs a structured, multi-phase review of a git
+`middleton` is a Rust CLI that runs a structured, multi-phase review of a git
 repository or local directory. It uses [OpenCode](https://opencode.ai),
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code), or
 [Codex](https://github.com/openai/codex) agents to examine
@@ -17,7 +17,7 @@ analysis: adversarial prosecution, charitable defense, and a middle-ground
 legitimacy verdict.
 
 The goal is not a conventional code review. Middleton asks
-**whether a repository is substantive or performative**: hollow scaffolding
+whether a repository is **substantive or performative**: hollow scaffolding
 versus tangible engineering, stagecraft versus sincerity, claims backed by
 implementation versus narrative hype.
 
@@ -51,17 +51,16 @@ implementation versus narrative hype.
 ## How it works
 
 Middleton runs five analysis phases against the target directory using either
-OpenCode, Claude Code, or Codex. Each phase uses a plan → build workflow: the agent plans
-its analysis, then writes structured markdown artifacts under
+OpenCode, Claude Code, or Codex. Each phase uses a plan → build workflow: the
+agent plans its analysis, then writes structured markdown artifacts under
 `.middleton/<agent>/` (for example `.middleton/opencode/` or
 `.middleton/claudecode/`), so outcomes from different agent backends stay
-separate.
-Analysis is **read-only** — middleton rejects execution permissions (bash,
-compile, run, etc.) and only allows writes under the agent's `.middleton/<agent>/`
-directory during the build step.
+separate. Analysis is **read-only** — middleton rejects execution permissions
+(bash, compile, run, etc.) and only allows writes under the agent's
+`.middleton/<agent>/` directory during the build step.
 
-Session IDs are recorded in `.middleton/<agent>/sessions.json` so you can resume or
-inspect individual phases later.
+Session IDs are recorded in `.middleton/<agent>/sessions.json` so you can resume
+or inspect individual phases later.
 
 ```mermaid
 flowchart TB
@@ -200,7 +199,8 @@ Unless `--skip-pdf` is set, middleton then runs **pandoc** on every phase `.md`
 file and on `TRIAL.md`, writing matching `.pdf` files with numbered sections, a
 table of contents, syntax highlighting, and a styled header/footer.
 
-The target repository itself is not modified beyond the `.middleton/<agent>/` directory.
+The target repository itself is not modified beyond the `.middleton/<agent>/`
+directory.
 
 ## License
 
