@@ -1,0 +1,60 @@
+name: middleton
+
+x-build-common: &build-common
+  RUST_VERSION: ${RUST_VERSION:-1.96.0}
+  DEBIAN_VERSION: ${DEBIAN_VERSION:-trixie}
+
+services:
+  middleton-opencode:
+    build:
+      context: .
+      target: opencode-runtime
+      args:
+        <<: *build-common
+        OPENCODE_VERSION: ${OPENCODE_VERSION:-v1.15.12}
+    user: "1000:1000"
+    env_file:
+      - path: .env.opencode.token
+        required: false
+    volumes:
+      - ${MIDDLETON_STORAGE:-middleton-data}:/workspace
+    working_dir: /workspace
+    entrypoint: ["middleton"]
+    command: ["--help"]
+
+  middleton-codex:
+    build:
+      context: .
+      target: codex-runtime
+      args:
+        <<: *build-common
+        CODEX_VERSION: ${CODEX_VERSION:-0.135.0}
+    user: "1000:1000"
+    env_file:
+      - path: .env.codex.token
+        required: false
+    volumes:
+      - ${MIDDLETON_STORAGE:-middleton-data}:/workspace
+    working_dir: /workspace
+    entrypoint: ["middleton", "--agent", "codex"]
+    command: ["--help"]
+
+  middleton-claude:
+    build:
+      context: .
+      target: claude-runtime
+      args:
+        <<: *build-common
+        CLAUDE_VERSION: ${CLAUDE_VERSION:-stable}
+    user: "1000:1000"
+    env_file:
+      - path: .env.claude.token
+        required: false
+    volumes:
+      - ${MIDDLETON_STORAGE:-middleton-data}:/workspace
+    working_dir: /workspace
+    entrypoint: ["middleton", "--agent", "claudecode"]
+    command: ["--help"]
+
+volumes:
+  middleton-data:
