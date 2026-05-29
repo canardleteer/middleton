@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use claude_codes::{
@@ -10,12 +11,16 @@ use claude_codes::{
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::agent::ReviewProfile;
 use crate::output::{
     log_missing_outputs, log_outputs_ready, missing_outputs, nudge_prompt, settle_outputs,
     verify_outputs,
 };
+use crate::run_log::{ConfirmedAction, RunLog};
 
-const READ_ONLY_TOOLS: &[&str] = &["Bash", "WebFetch", "WebSearch"];
+const SHELL_TOOLS: &[&str] = &["Bash"];
+const WEB_TOOLS: &[&str] = &["WebFetch", "WebSearch"];
+const BUILD_DISALLOWED_TOOLS: &[&str] = &["Bash", "WebFetch", "WebSearch"];
 const MAX_BUILD_ATTEMPTS: u32 = 3;
 const DEFAULT_QUESTION_ANSWER: &str = "Use your best judgment and proceed without blocking.";
 
@@ -30,10 +35,12 @@ struct StepRequest<'a> {
     prompt: &'a str,
     target: &'a Path,
     model: &'a str,
+    profile: ReviewProfile,
     permission_mode: PermissionMode,
     resume_session_id: Option<&'a str>,
     phase: &'a str,
     step: StepKind,
+    run_log: Arc<RunLog>,
 }
 
 pub struct ClaudeCodeRuntime {
@@ -65,14 +72,17 @@ pub fn model_label(model: &str) -> &str {
     model
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_plan_build_phase(
     runtime: &ClaudeCodeRuntime,
     phase: &str,
     plan_prompt: &str,
     build_prompt: &str,
     model: &str,
+    profile: ReviewProfile,
     target: &Path,
     expected_outputs: &[&Path],
+    run_log: Arc<RunLog>,
 ) -> Result<String> {
     info!(phase, agent = "claude-codes", "starting plan step");
     let (session_id, _) = run_step(StepRequest {
@@ -80,10 +90,12 @@ pub async fn run_plan_build_phase(
         prompt: plan_prompt,
         target,
         model,
+        profile,
         permission_mode: PermissionMode::Plan,
         resume_session_id: None,
         phase,
         step: StepKind::Plan,
+        run_log: Arc::clone(&run_log),
     })
     .await
     .with_context(|| format!("run claude-codes plan step for {phase}"))?;
@@ -95,9 +107,11 @@ pub async fn run_plan_build_phase(
         phase,
         build_prompt,
         model,
+        profile,
         target,
         &session_id,
         expected_outputs,
+        run_log,
     )
     .await?;
 
@@ -111,14 +125,17 @@ pub async fn run_plan_build_phase(
     Ok(session_id)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn ensure_build_outputs(
     claude_bin: &str,
     phase: &str,
     build_prompt: &str,
     model: &str,
+    profile: ReviewProfile,
     target: &Path,
     session_id: &str,
     expected_outputs: &[&Path],
+    run_log: Arc<RunLog>,
 ) -> Result<()> {
     let mut prompt = build_prompt.to_string();
 
@@ -129,10 +146,12 @@ async fn ensure_build_outputs(
             prompt: &prompt,
             target,
             model,
+            profile,
             permission_mode: PermissionMode::AcceptEdits,
             resume_session_id: Some(session_id),
             phase,
             step: StepKind::Build,
+            run_log: Arc::clone(&run_log),
         })
         .await
         .with_context(|| format!("run claude-codes build step for {phase}"))?;
@@ -163,10 +182,12 @@ async fn run_step(req: StepRequest<'_>) -> Result<(String, Vec<ClaudeOutput>)> {
         prompt,
         target,
         model,
+        profile,
         permission_mode,
         resume_session_id,
         phase,
         step,
+        run_log,
     } = req;
 
     let mut builder = ClaudeCliBuilder::new()
@@ -174,13 +195,9 @@ async fn run_step(req: StepRequest<'_>) -> Result<(String, Vec<ClaudeOutput>)> {
         .model(model)
         .permission_mode(permission_mode)
         .permission_prompt_tool("stdio")
-        .disallowed_tools(
-            READ_ONLY_TOOLS
-                .iter()
-                .map(|tool| (*tool).to_string())
-                .collect::<Vec<_>>(),
-        )
         .add_directories([target]);
+
+    builder = builder.disallowed_tools(disallowed_tools_for_step(profile, step));
 
     if let Some(session_id) = resume_session_id {
         builder = builder.resume(Some(session_id.to_string()));
@@ -198,9 +215,10 @@ async fn run_step(req: StepRequest<'_>) -> Result<(String, Vec<ClaudeOutput>)> {
     let mut client = AsyncClient::new(child)
         .with_context(|| format!("create claude-codes {step:?} client for {phase}"))?;
 
-    let responses = query_with_control_handling(&mut client, prompt, step, target)
-        .await
-        .with_context(|| format!("run claude-codes {step:?} query for {phase}"))?;
+    let responses =
+        query_with_control_handling(&mut client, prompt, profile, step, phase, target, &run_log)
+            .await
+            .with_context(|| format!("run claude-codes {step:?} query for {phase}"))?;
 
     if let Some(err) = responses.iter().find_map(|o| o.as_anthropic_error()) {
         bail!(
@@ -237,11 +255,27 @@ async fn run_step(req: StepRequest<'_>) -> Result<(String, Vec<ClaudeOutput>)> {
 }
 
 /// Drive the Claude session until a result arrives, auto-answering permission prompts.
+fn disallowed_tools_for_step(profile: ReviewProfile, step: StepKind) -> Vec<String> {
+    match step {
+        StepKind::Build => BUILD_DISALLOWED_TOOLS
+            .iter()
+            .map(|tool| (*tool).to_string())
+            .collect(),
+        StepKind::Plan if profile == ReviewProfile::Documents => {
+            SHELL_TOOLS.iter().map(|tool| (*tool).to_string()).collect()
+        }
+        StepKind::Plan => Vec::new(),
+    }
+}
+
 async fn query_with_control_handling(
     client: &mut AsyncClient,
     prompt: &str,
+    profile: ReviewProfile,
     step: StepKind,
+    phase: &str,
     target: &Path,
+    run_log: &RunLog,
 ) -> Result<Vec<ClaudeOutput>> {
     client
         .enable_tool_approval()
@@ -269,24 +303,31 @@ async fn query_with_control_handling(
         if let ClaudeOutput::ControlRequest(req) = &output {
             match &req.request {
                 ControlRequestPayload::CanUseTool(perm) => {
-                    let response = permission_response(perm, &req.request_id, step, target)?;
-                    info!(
-                        tool = %perm.tool_name,
-                        ?step,
-                        decision = permission_decision_label(&response),
-                        "auto-responded to claude permission request"
-                    );
+                    let response = permission_response(
+                        perm,
+                        &req.request_id,
+                        profile,
+                        step,
+                        phase,
+                        target,
+                        run_log,
+                    )?;
                     client
                         .send_control_response(response)
                         .await
                         .context("send claude-codes control response")?;
                 }
-                other => {
-                    warn!(
-                        subtype = ?other,
-                        ?step,
-                        "ignoring unsupported claude control request"
-                    );
+                ControlRequestPayload::HookCallback(_) | ControlRequestPayload::McpMessage(_) => {
+                    client
+                        .send_control_response(ControlResponse::success_empty(&req.request_id))
+                        .await
+                        .context("ack claude hook/mcp control request")?;
+                }
+                ControlRequestPayload::Initialize(_) => {
+                    client
+                        .send_control_response(ControlResponse::success_empty(&req.request_id))
+                        .await
+                        .context("ack claude initialize control request")?;
                 }
             }
             continue;
@@ -295,11 +336,13 @@ async fn query_with_control_handling(
         if let ClaudeOutput::User(user) = &output
             && let Some(reply) = interactive_follow_up(&user.message.content, step)
         {
-            info!(
-                ?step,
-                reply = %reply,
-                "auto-replying to claude interactive user message"
-            );
+            run_log.record_confirmed(ConfirmedAction {
+                agent: "claudecode",
+                phase,
+                step: step_kind_label(step),
+                kind: "interactive",
+                detail: truncate(&reply, 240),
+            })?;
             client
                 .send(&ClaudeInput::user_message(
                     reply,
@@ -378,6 +421,14 @@ fn looks_interactive_prompt(text: &str) -> bool {
         || lower.contains("requires approval")
         || lower.contains("askuserquestion")
         || lower.contains("answer your questions")
+        || lower.contains("allow ")
+        || lower.contains("approve")
+        || lower.contains("confirm")
+        || lower.contains("websearch")
+        || lower.contains("web fetch")
+        || lower.contains("webfetch")
+        || lower.contains("proceed with")
+        || lower.contains("would you like")
 }
 
 fn auto_reply_for_prompt(prompt: &str, step: StepKind) -> String {
@@ -390,6 +441,18 @@ Do not request further interactive confirmation."
     if lower.contains("answer your questions") || lower.contains("askuserquestion") {
         return format!("{DEFAULT_QUESTION_ANSWER} Proceed without blocking.");
     }
+    if lower.contains("websearch")
+        || lower.contains("web fetch")
+        || lower.contains("webfetch")
+        || (lower.contains("search") && lower.contains("allow"))
+    {
+        return "Yes. Proceed with read-only web search for corroboration. \
+Label findings as external context."
+            .to_string();
+    }
+    if lower.contains("allow") || lower.contains("approve") || lower.contains("confirm") {
+        return "Yes. Approved — continue without waiting for a human.".to_string();
+    }
     match step {
         StepKind::Plan => "Continue planning in read-only mode. Do not run commands, \
 do not write files, and do not ask for interactive confirmation."
@@ -400,20 +463,44 @@ do not ask for interactive confirmation."
     }
 }
 
+fn step_kind_label(step: StepKind) -> &'static str {
+    match step {
+        StepKind::Plan => "plan",
+        StepKind::Build => "build",
+    }
+}
+
+fn truncate(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    text.chars().take(max).collect::<String>() + "…"
+}
+
 fn permission_response(
     perm: &ToolPermissionRequest,
     request_id: &str,
+    profile: ReviewProfile,
     step: StepKind,
+    phase: &str,
     target: &Path,
+    run_log: &RunLog,
 ) -> Result<ControlResponse> {
     if perm.tool_name == "AskUserQuestion" {
         let answers = default_question_answers(perm)?;
+        run_log.record_confirmed(ConfirmedAction {
+            agent: "claudecode",
+            phase,
+            step: step_kind_label(step),
+            kind: "question",
+            detail: format!("tool=AskUserQuestion request_id={request_id}"),
+        })?;
         return perm
             .answer_questions(&answers, request_id)
             .context("answer AskUserQuestion control request");
     }
 
-    if is_execution_tool(&perm.tool_name) {
+    if is_execution_tool(&perm.tool_name, profile, step) {
         return Ok(perm.deny(
             "middleton does not allow command execution during review",
             request_id,
@@ -422,7 +509,11 @@ fn permission_response(
 
     match step {
         StepKind::Plan => {
-            if perm.tool_name == "ExitPlanMode" || is_read_tool(&perm.tool_name) {
+            if perm.tool_name == "ExitPlanMode"
+                || is_read_tool(&perm.tool_name)
+                || plan_tool_allowed(profile, &perm.tool_name)
+            {
+                log_claude_tool_confirmed(run_log, phase, step, perm)?;
                 return Ok(perm.allow(request_id));
             }
             if is_write_tool(&perm.tool_name) {
@@ -431,16 +522,20 @@ fn permission_response(
                     request_id,
                 ));
             }
+            log_claude_tool_confirmed(run_log, phase, step, perm)?;
             Ok(perm.allow(request_id))
         }
         StepKind::Build => {
             if perm.tool_name == "ExitPlanMode" {
+                log_claude_tool_confirmed(run_log, phase, step, perm)?;
                 return Ok(perm.allow(request_id));
             }
             if is_read_tool(&perm.tool_name) {
+                log_claude_tool_confirmed(run_log, phase, step, perm)?;
                 return Ok(perm.allow(request_id));
             }
             if is_write_tool(&perm.tool_name) && writes_middleton_only(perm, target) {
+                log_claude_tool_confirmed(run_log, phase, step, perm)?;
                 return Ok(perm.allow(request_id));
             }
             if is_write_tool(&perm.tool_name) {
@@ -472,28 +567,30 @@ fn default_question_answers(perm: &ToolPermissionRequest) -> Result<HashMap<usiz
     Ok(answers)
 }
 
-fn permission_decision_label(response: &ControlResponse) -> &'static str {
-    if response_allows(response) {
-        "allow"
-    } else {
-        "deny"
-    }
+fn log_claude_tool_confirmed(
+    run_log: &RunLog,
+    phase: &str,
+    step: StepKind,
+    perm: &ToolPermissionRequest,
+) -> Result<()> {
+    let input = serde_json::to_string(&perm.input).unwrap_or_else(|_| perm.input.to_string());
+    run_log.record_confirmed(ConfirmedAction {
+        agent: "claudecode",
+        phase,
+        step: step_kind_label(step),
+        kind: "tool",
+        detail: format!("tool={} input={}", perm.tool_name, truncate(&input, 200)),
+    })
 }
 
-fn response_allows(response: &ControlResponse) -> bool {
-    let claude_codes::ControlResponsePayload::Success {
-        response: Some(body),
-        ..
-    } = &response.response
-    else {
+fn plan_tool_allowed(profile: ReviewProfile, tool: &str) -> bool {
+    is_web_tool(tool) || (profile == ReviewProfile::Repository && is_shell_tool(tool))
+}
+
+fn is_execution_tool(tool: &str, profile: ReviewProfile, step: StepKind) -> bool {
+    if step == StepKind::Plan && plan_tool_allowed(profile, tool) {
         return false;
-    };
-    body.get("behavior")
-        .and_then(|value| value.as_str())
-        .is_some_and(|behavior| behavior == "allow")
-}
-
-fn is_execution_tool(tool: &str) -> bool {
+    }
     let tool = tool.to_ascii_lowercase();
     tool.contains("bash")
         || tool.contains("command")
@@ -503,9 +600,20 @@ fn is_execution_tool(tool: &str) -> bool {
         || tool.contains("install")
         || tool.contains("network")
         || tool.contains("fetch")
-        || READ_ONLY_TOOLS
-            .iter()
-            .any(|blocked| tool.eq_ignore_ascii_case(blocked))
+        || is_web_tool(&tool)
+        || is_shell_tool(&tool)
+}
+
+fn is_web_tool(tool: &str) -> bool {
+    WEB_TOOLS
+        .iter()
+        .any(|allowed| tool.eq_ignore_ascii_case(allowed))
+}
+
+fn is_shell_tool(tool: &str) -> bool {
+    SHELL_TOOLS
+        .iter()
+        .any(|allowed| tool.eq_ignore_ascii_case(allowed))
 }
 
 fn is_read_tool(tool: &str) -> bool {
@@ -550,8 +658,40 @@ fn result_error_message(result: &ResultMessage) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::agent::AgentKind;
+    use crate::paths::ArtifactPaths;
     use serde_json::json;
+
+    fn test_run_log() -> Arc<RunLog> {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("repo");
+        std::fs::create_dir_all(&target).unwrap();
+        Arc::new(RunLog::open(&ArtifactPaths::new(&target, AgentKind::OpenCode)).unwrap())
+    }
+
+    fn permission_decision_label(response: &ControlResponse) -> &'static str {
+        if response_allows(response) {
+            "allow"
+        } else {
+            "deny"
+        }
+    }
+
+    fn response_allows(response: &ControlResponse) -> bool {
+        let claude_codes::ControlResponsePayload::Success {
+            response: Some(body),
+            ..
+        } = &response.response
+        else {
+            return false;
+        };
+        body.get("behavior")
+            .and_then(|value| value.as_str())
+            .is_some_and(|behavior| behavior == "allow")
+    }
 
     #[test]
     fn parse_model_accepts_known_values() {
@@ -571,8 +711,17 @@ mod tests {
             decision_reason: None,
             tool_use_id: None,
         };
-        let response =
-            permission_response(&perm, "req-1", StepKind::Plan, Path::new("/repo")).unwrap();
+        let log = test_run_log();
+        let response = permission_response(
+            &perm,
+            "req-1",
+            ReviewProfile::Repository,
+            StepKind::Plan,
+            "test",
+            Path::new("/repo"),
+            &log,
+        )
+        .unwrap();
         assert_eq!(permission_decision_label(&response), "allow");
     }
 
@@ -586,8 +735,17 @@ mod tests {
             decision_reason: None,
             tool_use_id: None,
         };
-        let response =
-            permission_response(&perm, "req-1", StepKind::Plan, Path::new("/repo")).unwrap();
+        let log = test_run_log();
+        let response = permission_response(
+            &perm,
+            "req-1",
+            ReviewProfile::Repository,
+            StepKind::Plan,
+            "test",
+            Path::new("/repo"),
+            &log,
+        )
+        .unwrap();
         assert_eq!(permission_decision_label(&response), "deny");
     }
 
@@ -608,6 +766,78 @@ mod tests {
     }
 
     #[test]
+    fn plan_step_allows_web_search() {
+        let perm = ToolPermissionRequest {
+            tool_name: "WebSearch".to_string(),
+            input: json!({}),
+            permission_suggestions: vec![],
+            blocked_path: None,
+            decision_reason: None,
+            tool_use_id: None,
+        };
+        let log = test_run_log();
+        let response = permission_response(
+            &perm,
+            "req-1",
+            ReviewProfile::Repository,
+            StepKind::Plan,
+            "test",
+            Path::new("/repo"),
+            &log,
+        )
+        .unwrap();
+        assert_eq!(permission_decision_label(&response), "allow");
+    }
+
+    #[test]
+    fn documents_plan_denies_bash() {
+        let perm = ToolPermissionRequest {
+            tool_name: "Bash".to_string(),
+            input: json!({}),
+            permission_suggestions: vec![],
+            blocked_path: None,
+            decision_reason: None,
+            tool_use_id: None,
+        };
+        let log = test_run_log();
+        let response = permission_response(
+            &perm,
+            "req-1",
+            ReviewProfile::Documents,
+            StepKind::Plan,
+            "test",
+            Path::new("/repo"),
+            &log,
+        )
+        .unwrap();
+        assert_eq!(permission_decision_label(&response), "deny");
+    }
+
+    #[test]
+    fn build_step_denies_web_search() {
+        let perm = ToolPermissionRequest {
+            tool_name: "WebSearch".to_string(),
+            input: json!({}),
+            permission_suggestions: vec![],
+            blocked_path: None,
+            decision_reason: None,
+            tool_use_id: None,
+        };
+        let log = test_run_log();
+        let response = permission_response(
+            &perm,
+            "req-1",
+            ReviewProfile::Repository,
+            StepKind::Build,
+            "test",
+            Path::new("/repo"),
+            &log,
+        )
+        .unwrap();
+        assert_eq!(permission_decision_label(&response), "deny");
+    }
+
+    #[test]
     fn build_step_allows_middleton_write() {
         let perm = ToolPermissionRequest {
             tool_name: "Write".to_string(),
@@ -617,8 +847,17 @@ mod tests {
             decision_reason: None,
             tool_use_id: None,
         };
-        let response =
-            permission_response(&perm, "req-1", StepKind::Build, Path::new("/repo")).unwrap();
+        let log = test_run_log();
+        let response = permission_response(
+            &perm,
+            "req-1",
+            ReviewProfile::Repository,
+            StepKind::Build,
+            "test",
+            Path::new("/repo"),
+            &log,
+        )
+        .unwrap();
         assert_eq!(permission_decision_label(&response), "allow");
     }
 }

@@ -55,9 +55,11 @@ OpenCode, Claude Code, or Codex. Each phase uses a plan → build workflow: the
 agent plans its analysis, then writes structured markdown artifacts under
 `.middleton/<agent>/` (for example `.middleton/opencode/` or
 `.middleton/claudecode/`), so outcomes from different agent backends stay
-separate. Analysis is **read-only** — middleton rejects execution permissions
-(bash, compile, run, etc.) and only allows writes under the agent's
-`.middleton/<agent>/` directory during the build step.
+separate. Analysis is **read-only** for the target corpus: the agent may use
+read-only git history and guarded web search **during the plan step only** (when
+the backend supports it), then transcribes findings during build. Middleton
+rejects installs, builds, tests, and target-corpus writes; build steps may only
+write under `.middleton/<agent>/`.
 
 Session IDs are recorded in `.middleton/<agent>/sessions.json` so you can resume
 or inspect individual phases later.
@@ -95,12 +97,25 @@ flowchart TB
     DEFENSE --> JUDGEMENT
 ```
 
+### Review profiles
+
+Use `--profile` to choose the corpus lens (default `repository`):
+
+| Profile | Use when |
+|---------|----------|
+| `repository` | Git repos with code, CI, proofs, and docs — assess implementation vs claims |
+| `documents` | Specs, architecture packs, or design folders with little or no code — rigorous doc evaluation without penalizing missing source |
+
+Both profiles run the same five phases and write the same artifact filenames.
+`INTENT-SCAN-2` means full-codebase signals in `repository` mode and
+cross-document structure/coherence in `documents` mode.
+
 ### Phases
 
 | Phase | Reads | Writes | Role |
 |-------|-------|--------|------|
-| **Intent** | Repository (docs + code, read-only) | `INTENT-SCAN-1.md`, `INTENT-SCAN-2.md` | Forensic scan for rhetorical intent, stagecraft, and performative signals |
-| **Depth** | Repository (independent; ignores `.middleton/`) | `DEPTH.md` | Assesses hollow vs. tangible substance — CI, proofs, papers, code quality |
+| **Intent** | Corpus (read-only; scope depends on profile) | `INTENT-SCAN-1.md`, `INTENT-SCAN-2.md` | Forensic scan for rhetorical intent, stagecraft, and performative signals |
+| **Depth** | Corpus (independent; ignores `.middleton/`) | `DEPTH.md` | Hollow vs. tangible substance (code/CI in `repository`; doc coherence in `documents`) |
 | **Prosecution** | Intent scans + depth | `PROSECUTION.md` | Adversarial brief: psychological profiling, mythos, publishing intent |
 | **Defense** | Intent scans + depth + prosecution | `DEFENSE.md` | Charitable rebuttal with the same structure as prosecution |
 | **Judgement** | All prior artifacts | `JUDGEMENT.md` | Middle-ground synthesis and a committed legitimacy verdict |
@@ -202,6 +217,12 @@ Review with Codex instead:
 middleton /path/to/repo --agent codex
 ```
 
+Review a specification or design document pack (no code penalty):
+
+```bash
+middleton /path/to/architecture-pack --profile documents
+```
+
 Clone and review a git repository (defaults to `./<repo-name>` in the current directory):
 
 ```bash
@@ -237,6 +258,31 @@ middleton --export-pdf /path/to/repo/.middleton/opencode
 | `--skip-pdf` | — | Skip pandoc PDF export at the end |
 | `--export-pdf` | — | Export only markdown files in `DIR` that do not yet have a `.pdf` (skips the trial pipeline) |
 | `--note` | — | Additional context prepended to all analysis prompts |
+| `--profile` | `repository` | Corpus lens: `repository` or `documents` |
+
+### Plan vs build and agent backends
+
+During the **plan** step, agents may optionally use read-only `git` commands and
+guarded web search/fetch to corroborate external claims; prompts require labeling
+those findings as external context. During **build**, agents only write
+`.middleton/<agent>/` markdown from the completed plan — no new investigation.
+
+| Backend | `repository` plan step | `documents` plan step |
+|---------|----------------------|----------------------|
+| OpenCode | File reads + bash/git + web | File reads + web only |
+| Claude Code | Reads + `Bash` + `WebSearch`/`WebFetch` | Reads + web tools; `Bash` disallowed |
+| Codex | Network on; shell accepted in plan | Network on; shell declined in plan |
+
+Build steps for both profiles: file reads and `.middleton/` writes only — no shell,
+git, or web.
+
+Middleton auto-answers tool permission prompts, user-input questions, and Codex
+approval requests so Claude Code and Codex runs do not block waiting for a human
+in the terminal.
+
+Each run appends to `.middleton/<agent>/actions.log`: run timestamp, CLI
+options, target path, and every action middleton confirmed on your behalf (also
+logged at `info` level).
 
 ## Output
 
@@ -246,7 +292,7 @@ All artifacts are written to `<target>/.middleton/<agent>/`:
 .middleton/
 └── opencode/              # or claudecode/, codex/, etc.
     ├── INTENT-SCAN-1.md    # Documentation-layer intent scan
-    ├── INTENT-SCAN-2.md    # Full-codebase intent scan
+    ├── INTENT-SCAN-2.md    # Codebase or cross-document intent scan (profile-dependent)
     ├── DEPTH.md            # Hollow vs. tangible substance analysis
     ├── PROSECUTION.md      # Adversarial brief
     ├── DEFENSE.md          # Charitable brief
