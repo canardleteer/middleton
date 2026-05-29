@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -11,10 +12,12 @@ use opencode_rs::types::question::QuestionReply;
 use opencode_rs::types::session::{CreateSessionRequest, SessionStatusInfo};
 use tracing::{debug, error, info, warn};
 
+use crate::agent::ReviewProfile;
 use crate::output::{
     log_missing_outputs, log_outputs_ready, missing_outputs, nudge_prompt, settle_outputs,
     verify_outputs,
 };
+use crate::run_log::{ConfirmedAction, RunLog};
 
 const IDLE_GRACE: Duration = Duration::from_secs(2);
 const SESSION_DEADLINE: Duration = Duration::from_secs(3600);
@@ -28,13 +31,16 @@ enum SessionStep {
     Build,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_plan_build_phase(
     client: &Client,
     phase: &str,
     plan_prompt: &str,
     build_prompt: &str,
     model: &ModelRef,
+    profile: ReviewProfile,
     expected_outputs: &[&Path],
+    run_log: Arc<RunLog>,
 ) -> Result<String> {
     let session = client
         .sessions()
@@ -56,7 +62,10 @@ pub async fn run_plan_build_phase(
         client,
         &session.id,
         &mut subscription,
+        profile,
         SessionStep::Plan,
+        phase,
+        &run_log,
         true,
     )
     .await?;
@@ -66,7 +75,10 @@ pub async fn run_plan_build_phase(
         client,
         &session.id,
         &mut subscription,
+        profile,
         SessionStep::Build,
+        phase,
+        &run_log,
         true,
     )
     .await?;
@@ -76,8 +88,10 @@ pub async fn run_plan_build_phase(
         &session.id,
         &mut subscription,
         model,
+        profile,
         expected_outputs,
         phase,
+        &run_log,
     )
     .await?;
 
@@ -91,13 +105,16 @@ pub async fn run_plan_build_phase(
     Ok(session.id)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn ensure_build_outputs(
     client: &Client,
     session_id: &str,
     subscription: &mut opencode_rs::sse::SseSubscription<Event>,
     model: &ModelRef,
+    profile: ReviewProfile,
     expected_outputs: &[&Path],
     phase: &str,
+    run_log: &RunLog,
 ) -> Result<()> {
     for attempt in 1..=MAX_BUILD_ATTEMPTS {
         let _ = settle_outputs(expected_outputs).await;
@@ -116,7 +133,17 @@ async fn ensure_build_outputs(
 
         let prompt = nudge_prompt(&missing);
         send_prompt(client, session_id, &prompt, model, "build").await?;
-        wait_until_idle(client, session_id, subscription, SessionStep::Build, true).await?;
+        wait_until_idle(
+            client,
+            session_id,
+            subscription,
+            profile,
+            SessionStep::Build,
+            phase,
+            run_log,
+            true,
+        )
+        .await?;
     }
 
     verify_outputs(expected_outputs, phase)
@@ -154,11 +181,15 @@ async fn send_prompt(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn wait_until_idle(
     client: &Client,
     session_id: &str,
     subscription: &mut opencode_rs::sse::SseSubscription<Event>,
+    profile: ReviewProfile,
     step: SessionStep,
+    phase: &str,
+    run_log: &RunLog,
     dispatched_new_work: bool,
 ) -> Result<()> {
     let deadline = tokio::time::Instant::now() + SESSION_DEADLINE;
@@ -188,7 +219,18 @@ async fn wait_until_idle(
                     continue;
                 };
 
-                if handle_event(client, session_id, event, step, &mut last_activity).await? {
+                if handle_event(
+                    client,
+                    session_id,
+                    event,
+                    profile,
+                    step,
+                    phase,
+                    run_log,
+                    &mut last_activity,
+                )
+                .await?
+                {
                     return Ok(());
                 }
                 observed_busy = true;
@@ -196,7 +238,9 @@ async fn wait_until_idle(
             }
 
             _ = poll_interval.tick() => {
-                if handle_pending_interactions(client, session_id, step).await? {
+                if handle_pending_interactions(client, session_id, profile, step, phase, run_log)
+                    .await?
+                {
                     observed_busy = true;
                     last_activity = tokio::time::Instant::now();
                     continue;
@@ -256,11 +300,15 @@ async fn wait_until_idle(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_event(
     client: &Client,
     session_id: &str,
     event: Event,
+    profile: ReviewProfile,
     step: SessionStep,
+    phase: &str,
+    run_log: &RunLog,
     last_activity: &mut tokio::time::Instant,
 ) -> Result<bool> {
     match event {
@@ -277,12 +325,12 @@ async fn handle_event(
             bail!("session {session_id} failed: {message}");
         }
         Event::PermissionAsked { properties } => {
-            reply_permission(client, &properties.request, step).await?;
+            reply_permission(client, &properties.request, profile, step, phase, run_log).await?;
             *last_activity = tokio::time::Instant::now();
             Ok(false)
         }
         Event::QuestionAsked { properties } => {
-            reply_question(client, &properties.request).await?;
+            reply_question(client, &properties.request, phase, run_log).await?;
             *last_activity = tokio::time::Instant::now();
             Ok(false)
         }
@@ -299,7 +347,10 @@ async fn handle_event(
 async fn handle_pending_interactions(
     client: &Client,
     session_id: &str,
+    profile: ReviewProfile,
     step: SessionStep,
+    phase: &str,
+    run_log: &RunLog,
 ) -> Result<bool> {
     let permissions = client.permissions().list().await.unwrap_or_else(|error| {
         warn!(session_id, %error, "failed to list permissions");
@@ -310,7 +361,7 @@ async fn handle_pending_interactions(
         .into_iter()
         .find(|request| request.session_id == session_id)
     {
-        reply_permission(client, &permission, step).await?;
+        reply_permission(client, &permission, profile, step, phase, run_log).await?;
         return Ok(true);
     }
 
@@ -323,7 +374,7 @@ async fn handle_pending_interactions(
         .into_iter()
         .find(|request| request.session_id == session_id)
     {
-        reply_question(client, &question).await?;
+        reply_question(client, &question, phase, run_log).await?;
         return Ok(true);
     }
 
@@ -333,29 +384,34 @@ async fn handle_pending_interactions(
 async fn reply_permission(
     client: &Client,
     request: &PermissionRequest,
+    profile: ReviewProfile,
     step: SessionStep,
+    phase: &str,
+    run_log: &RunLog,
 ) -> Result<()> {
-    let reply = permission_reply(request, step);
-    let decision = match reply {
-        PermissionReply::Reject => "rejected",
-        PermissionReply::Once | PermissionReply::Always => "approved",
-    };
+    let reply = permission_reply(request, profile, step);
 
-    if reply == PermissionReply::Reject {
-        info!(
-            request_id = %request.id,
-            permission = %request.permission,
-            ?step,
-            patterns = ?request.patterns,
-            "denied permission"
-        );
+    if reply != PermissionReply::Reject {
+        let patterns = request.patterns.join(", ");
+        let detail = if patterns.is_empty() {
+            request.permission.clone()
+        } else {
+            format!("{} patterns=[{patterns}]", request.permission)
+        };
+        run_log.record_confirmed(ConfirmedAction {
+            agent: "opencode",
+            phase,
+            step: session_step_label(step),
+            kind: "permission",
+            detail,
+        })?;
     } else {
         debug!(
             request_id = %request.id,
             permission = %request.permission,
             ?step,
-            decision,
-            "permission reply"
+            patterns = ?request.patterns,
+            "denied permission"
         );
     }
 
@@ -374,42 +430,25 @@ async fn reply_permission(
     Ok(())
 }
 
-fn permission_reply(request: &PermissionRequest, step: SessionStep) -> PermissionReply {
+fn permission_reply(
+    request: &PermissionRequest,
+    profile: ReviewProfile,
+    step: SessionStep,
+) -> PermissionReply {
     let permission = request.permission.to_ascii_lowercase();
-
-    if is_execution_permission(&permission) {
-        return PermissionReply::Reject;
+    let allow = crate::agent::opencode_permission_reply(
+        profile,
+        &permission,
+        step == SessionStep::Plan,
+        writes_middleton_only(&request.patterns),
+        is_read_permission(&permission),
+        is_write_permission(&permission),
+    );
+    if allow {
+        PermissionReply::Once
+    } else {
+        PermissionReply::Reject
     }
-
-    match step {
-        SessionStep::Plan => {
-            if is_read_permission(&permission) {
-                PermissionReply::Once
-            } else {
-                PermissionReply::Reject
-            }
-        }
-        SessionStep::Build => {
-            if (is_write_permission(&permission) && writes_middleton_only(&request.patterns))
-                || is_read_permission(&permission)
-            {
-                PermissionReply::Once
-            } else {
-                PermissionReply::Reject
-            }
-        }
-    }
-}
-
-fn is_execution_permission(permission: &str) -> bool {
-    permission.contains("execute")
-        || permission.contains("bash")
-        || permission.contains("command")
-        || permission.contains("terminal")
-        || permission.contains("install")
-        || permission.contains("network")
-        || permission.contains("fetch")
-        || permission.contains("download")
 }
 
 fn is_read_permission(permission: &str) -> bool {
@@ -427,9 +466,18 @@ fn writes_middleton_only(patterns: &[String]) -> bool {
             .all(|pattern| pattern.contains(".middleton/") || pattern.ends_with(".middleton"))
 }
 
+fn session_step_label(step: SessionStep) -> &'static str {
+    match step {
+        SessionStep::Plan => "plan",
+        SessionStep::Build => "build",
+    }
+}
+
 async fn reply_question(
     client: &Client,
     question: &opencode_rs::types::question::QuestionRequest,
+    phase: &str,
+    run_log: &RunLog,
 ) -> Result<()> {
     let answers = question
         .questions
@@ -448,6 +496,24 @@ async fn reply_question(
         .reply(&question.id, &QuestionReply { answers })
         .await
         .with_context(|| format!("reply to question request {}", question.id))?;
+
+    let summary = question
+        .questions
+        .iter()
+        .map(|info| info.header.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
+    run_log.record_confirmed(ConfirmedAction {
+        agent: "opencode",
+        phase,
+        step: "question",
+        kind: "question",
+        detail: if summary.is_empty() {
+            format!("question_id={}", question.id)
+        } else {
+            format!("question_id={} topics=[{summary}]", question.id)
+        },
+    })?;
 
     debug!(request_id = %question.id, "auto-answered question");
     Ok(())
@@ -473,13 +539,61 @@ mod tests {
     }
 
     #[test]
-    fn plan_allows_reads_and_rejects_execution() {
+    fn repository_plan_allows_reads_git_and_web() {
         assert_eq!(
-            permission_reply(&request("file.read", &["src/main.rs"]), SessionStep::Plan),
+            permission_reply(
+                &request("file.read", &["src/main.rs"]),
+                ReviewProfile::Repository,
+                SessionStep::Plan
+            ),
             PermissionReply::Once
         );
         assert_eq!(
-            permission_reply(&request("bash.execute", &["cargo test"]), SessionStep::Plan),
+            permission_reply(
+                &request("bash.execute", &["git log --oneline -20"]),
+                ReviewProfile::Repository,
+                SessionStep::Plan
+            ),
+            PermissionReply::Once
+        );
+        assert_eq!(
+            permission_reply(
+                &request("network.fetch", &["https://example.com"]),
+                ReviewProfile::Repository,
+                SessionStep::Plan
+            ),
+            PermissionReply::Once
+        );
+    }
+
+    #[test]
+    fn documents_plan_allows_web_not_shell() {
+        assert_eq!(
+            permission_reply(
+                &request("network.fetch", &["https://example.com"]),
+                ReviewProfile::Documents,
+                SessionStep::Plan
+            ),
+            PermissionReply::Once
+        );
+        assert_eq!(
+            permission_reply(
+                &request("bash.execute", &["git log"]),
+                ReviewProfile::Documents,
+                SessionStep::Plan
+            ),
+            PermissionReply::Reject
+        );
+    }
+
+    #[test]
+    fn plan_rejects_install() {
+        assert_eq!(
+            permission_reply(
+                &request("tool.install", &["cargo"]),
+                ReviewProfile::Repository,
+                SessionStep::Plan
+            ),
             PermissionReply::Reject
         );
     }
@@ -489,6 +603,7 @@ mod tests {
         assert_eq!(
             permission_reply(
                 &request("file.write", &["/repo/.middleton/DEPTH.md"]),
+                ReviewProfile::Repository,
                 SessionStep::Plan
             ),
             PermissionReply::Reject
@@ -500,6 +615,7 @@ mod tests {
         assert_eq!(
             permission_reply(
                 &request("file.write", &["/repo/.middleton/DEPTH.md"]),
+                ReviewProfile::Repository,
                 SessionStep::Build
             ),
             PermissionReply::Once
@@ -507,6 +623,7 @@ mod tests {
         assert_eq!(
             permission_reply(
                 &request("file.write", &["/repo/src/main.rs"]),
+                ReviewProfile::Repository,
                 SessionStep::Build
             ),
             PermissionReply::Reject
@@ -518,6 +635,7 @@ mod tests {
         assert_eq!(
             permission_reply(
                 &request("bash.execute", &["cargo run -p rebuild-rs"]),
+                ReviewProfile::Repository,
                 SessionStep::Build
             ),
             PermissionReply::Reject

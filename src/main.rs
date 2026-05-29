@@ -1,5 +1,7 @@
 mod agent;
+#[allow(clippy::too_many_arguments)]
 mod claude_agent;
+#[allow(clippy::too_many_arguments)]
 mod codex_agent;
 mod manifest;
 mod opencode;
@@ -7,18 +9,20 @@ mod output;
 mod paths;
 mod pdf;
 mod prompts;
+mod run_log;
 mod session;
 mod target;
 mod trial;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use crate::agent::AgentKind;
+use crate::agent::{AgentKind, ReviewProfile};
 use crate::claude_agent::{
     ClaudeCodeRuntime, model_label as claude_model_label, parse_model as claude_model,
 };
@@ -32,6 +36,7 @@ use crate::opencode::{
 };
 use crate::paths::ArtifactPaths;
 use crate::prompts::{PhasePrompts, with_note};
+use crate::run_log::{RunLog, RunOptions};
 use crate::session::run_plan_build_phase as run_opencode_plan_build_phase;
 
 #[derive(Parser)]
@@ -92,6 +97,10 @@ struct Cli {
     /// Additional context about the artifact under review, prepended to all analysis prompts
     #[arg(long)]
     note: Option<String>,
+
+    /// Corpus lens: repository (code + docs) or documents (spec/design packs, no code penalty)
+    #[arg(long, value_enum, default_value_t = ReviewProfile::Repository)]
+    profile: ReviewProfile,
 }
 
 enum AgentRuntime {
@@ -124,11 +133,16 @@ async fn main() -> Result<()> {
         .ensure_dir()
         .with_context(|| format!("create {}", artifacts.dir.display()))?;
 
+    let run_log = Arc::new(RunLog::open(&artifacts)?);
+    run_log.record_run_start(&run_options_from_cli(&cli, &target, input))?;
+
     info!(
         agent = cli.agent.label(),
+        profile = cli.profile.label(),
         model = %cli.model,
         target = %target.display(),
         artifacts_dir = %artifacts.dir.display(),
+        actions_log = %run_log.path().display(),
         has_note = cli.note.as_ref().is_some_and(|note| !note.trim().is_empty()),
         "starting middleton"
     );
@@ -140,8 +154,10 @@ async fn main() -> Result<()> {
         &runtime,
         &artifacts,
         &cli.model,
+        cli.profile,
         &mut manifest,
         cli.note.as_deref(),
+        Arc::clone(&run_log),
     )
     .await;
 
@@ -259,15 +275,36 @@ fn run_export_pdf(middleton_dir: &Path, pandoc: &str) -> Result<()> {
     Ok(())
 }
 
+fn run_options_from_cli(cli: &Cli, target: &Path, input: &str) -> RunOptions {
+    RunOptions {
+        input: input.to_string(),
+        target: target.to_path_buf(),
+        agent: cli.agent,
+        profile: cli.profile,
+        model: cli.model.clone(),
+        hostname: cli.hostname.clone(),
+        opencode_bin: cli.opencode.clone(),
+        claude_bin: cli.claude.clone(),
+        codex_bin: cli.codex.clone(),
+        skip_pdf: cli.skip_pdf,
+        note_present: cli
+            .note
+            .as_ref()
+            .is_some_and(|note| !note.trim().is_empty()),
+    }
+}
+
 async fn run_pipeline(
     runtime: &AgentRuntime,
     artifacts: &ArtifactPaths,
     model: &str,
+    profile: ReviewProfile,
     manifest: &mut SessionManifest,
     note: Option<&str>,
+    run_log: Arc<RunLog>,
 ) -> Result<()> {
     let target = &artifacts.target;
-    let prompts = PhasePrompts::new(artifacts);
+    let prompts = PhasePrompts::new(artifacts, profile);
     let intent_plan = with_note(&prompts.intent_plan, note);
     let intent_build = with_note(&prompts.intent_build, note);
     let depth_plan = with_note(&prompts.depth_plan, note);
@@ -294,19 +331,23 @@ async fn run_pipeline(
             runtime,
             target,
             model,
+            profile,
             "intent",
             &intent_plan,
             &intent_build,
             &intent_outputs,
+            Arc::clone(&run_log),
         ),
         run_phase(
             runtime,
             target,
             model,
+            profile,
             "depth",
             &depth_plan,
             &depth_build,
             &depth_outputs,
+            Arc::clone(&run_log),
         ),
     )?;
 
@@ -319,10 +360,12 @@ async fn run_pipeline(
         runtime,
         target,
         model,
+        profile,
         "prosecution",
         &prosecution_plan,
         &prosecution_build,
         &prosecution_outputs,
+        Arc::clone(&run_log),
     )
     .await?;
     manifest.set("prosecution", prosecution_id);
@@ -333,10 +376,12 @@ async fn run_pipeline(
         runtime,
         target,
         model,
+        profile,
         "defense",
         &defense_plan,
         &defense_build,
         &defense_outputs,
+        Arc::clone(&run_log),
     )
     .await?;
     manifest.set("defense", defense_id);
@@ -347,10 +392,12 @@ async fn run_pipeline(
         runtime,
         target,
         model,
+        profile,
         "judgement",
         &judgement_plan,
         &judgement_build,
         &judgement_outputs,
+        Arc::clone(&run_log),
     )
     .await?;
     manifest.set("judgement", judgement_id);
@@ -359,14 +406,17 @@ async fn run_pipeline(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_phase(
     runtime: &AgentRuntime,
     target: &Path,
     model: &str,
+    profile: ReviewProfile,
     phase: &str,
     plan_prompt: &str,
     build_prompt: &str,
     expected_outputs: &[&Path],
+    run_log: Arc<RunLog>,
 ) -> Result<String> {
     match runtime {
         AgentRuntime::OpenCode(runtime) => {
@@ -377,7 +427,9 @@ async fn run_phase(
                 plan_prompt,
                 build_prompt,
                 &model,
+                profile,
                 expected_outputs,
+                run_log,
             )
             .await
         }
@@ -389,8 +441,10 @@ async fn run_phase(
                 plan_prompt,
                 build_prompt,
                 model,
+                profile,
                 target,
                 expected_outputs,
+                run_log,
             )
             .await
         }
@@ -402,8 +456,10 @@ async fn run_phase(
                 plan_prompt,
                 build_prompt,
                 model.as_deref(),
+                profile,
                 target,
                 expected_outputs,
+                run_log,
             )
             .await
         }
