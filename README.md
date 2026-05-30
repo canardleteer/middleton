@@ -52,6 +52,8 @@ implementation versus narrative hype.
     texlive-latex-extra texlive-fonts-recommended fonts-dejavu fonts-lmodern
   ```
 
+  Debian: see [`Dockerfile`](Dockerfile) (`runtime-base` apt/CTAN setup).
+
 ## How it works
 
 Middleton runs five analysis phases against the target directory using either
