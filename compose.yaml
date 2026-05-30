@@ -53,7 +53,7 @@ services:
     volumes:
       - ${MIDDLETON_STORAGE:-middleton-data}:/workspace
     working_dir: /workspace
-    entrypoint: ["middleton", "--agent", "claudecode"]
+    entrypoint: ["middleton", "--agent", "claude"]
     command: ["--help"]
 
 volumes:
