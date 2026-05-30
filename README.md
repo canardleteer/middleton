@@ -44,9 +44,13 @@ implementation versus narrative hype.
   - **Claude Code**: `claude` on your `PATH` with Claude Code authentication
     configured
   - **Codex**: `codex` on your `PATH` with Codex authentication configured
-- **pandoc** on your `PATH` for PDF export (or pass `--skip-pdf` to skip)
-- **PDF engine**: **xelatex** recommended; middleton falls back to **pdflatex**
-  if xelatex is unavailable
+- **PDF export** (optional; `--skip-pdf` to skip): **pandoc** and **xelatex**
+  (falls back to **pdflatex**). On Ubuntu:
+
+  ```bash
+  sudo apt install pandoc texlive-xetex texlive-latex-recommended \
+    texlive-latex-extra texlive-fonts-recommended fonts-dejavu fonts-lmodern
+  ```
 
 ## How it works
 
