@@ -61,7 +61,7 @@ pub fn parse_model(model: &str) -> &'static str {
         other => {
             warn!(
                 model = other,
-                "using Claude Code sonnet model; claude-codes accepts sonnet, opus, or haiku"
+                "using Claude sonnet model; claude accepts sonnet, opus, or haiku"
             );
             "sonnet"
         }
@@ -84,7 +84,7 @@ pub async fn run_plan_build_phase(
     expected_outputs: &[&Path],
     run_log: Arc<RunLog>,
 ) -> Result<String> {
-    info!(phase, agent = "claude-codes", "starting plan step");
+    info!(phase, agent = "claude", "starting plan step");
     let (session_id, _) = run_step(StepRequest {
         claude_bin: &runtime.claude_bin,
         prompt: plan_prompt,
@@ -98,7 +98,7 @@ pub async fn run_plan_build_phase(
         run_log: Arc::clone(&run_log),
     })
     .await
-    .with_context(|| format!("run claude-codes plan step for {phase}"))?;
+    .with_context(|| format!("run claude plan step for {phase}"))?;
 
     info!(phase, session_id = %session_id, "plan step complete");
 
@@ -154,7 +154,7 @@ async fn ensure_build_outputs(
             run_log: Arc::clone(&run_log),
         })
         .await
-        .with_context(|| format!("run claude-codes build step for {phase}"))?;
+        .with_context(|| format!("run claude build step for {phase}"))?;
 
         let _ = settle_outputs(expected_outputs).await;
 
@@ -205,24 +205,24 @@ async fn run_step(req: StepRequest<'_>) -> Result<(String, Vec<ClaudeOutput>)> {
 
     let mut cmd = builder
         .build_command()
-        .with_context(|| format!("build claude-codes {step:?} command for {phase}"))?;
+        .with_context(|| format!("build claude {step:?} command for {phase}"))?;
     cmd.current_dir(target);
 
     let child = cmd
         .spawn()
-        .with_context(|| format!("spawn claude-codes {step:?} process for {phase}"))?;
+        .with_context(|| format!("spawn claude {step:?} process for {phase}"))?;
 
     let mut client = AsyncClient::new(child)
-        .with_context(|| format!("create claude-codes {step:?} client for {phase}"))?;
+        .with_context(|| format!("create claude {step:?} client for {phase}"))?;
 
     let responses =
         query_with_control_handling(&mut client, prompt, profile, step, phase, target, &run_log)
             .await
-            .with_context(|| format!("run claude-codes {step:?} query for {phase}"))?;
+            .with_context(|| format!("run claude {step:?} query for {phase}"))?;
 
     if let Some(err) = responses.iter().find_map(|o| o.as_anthropic_error()) {
         bail!(
-            "claude-codes {step:?} step failed for {phase}: {}",
+            "claude {step:?} step failed for {phase}: {}",
             err.error.message
         );
     }
@@ -232,12 +232,12 @@ async fn run_step(req: StepRequest<'_>) -> Result<(String, Vec<ClaudeOutput>)> {
         .rev()
         .find_map(ClaudeOutput::as_result)
         .with_context(|| {
-            format!("claude-codes {step:?} step did not return a result for {phase}")
+            format!("claude {step:?} step did not return a result for {phase}")
         })?;
 
     if result.is_error {
         bail!(
-            "claude-codes {step:?} step failed for {phase}: {}",
+            "claude {step:?} step failed for {phase}: {}",
             result_error_message(result)
         );
     }
@@ -248,7 +248,7 @@ async fn run_step(req: StepRequest<'_>) -> Result<(String, Vec<ClaudeOutput>)> {
         .find_map(|o| o.session_id().map(str::to_string))
         .or_else(|| Some(result.session_id.clone()))
         .with_context(|| {
-            format!("claude-codes {step:?} step did not return a session id for {phase}")
+            format!("claude {step:?} step did not return a session id for {phase}")
         })?;
 
     Ok((session_id, responses))
@@ -280,13 +280,13 @@ async fn query_with_control_handling(
     client
         .enable_tool_approval()
         .await
-        .context("enable claude-codes tool approval protocol")?;
+        .context("enable claude tool approval protocol")?;
 
     let session_id = Uuid::new_v4();
     client
         .send(&ClaudeInput::user_message(prompt, session_id))
         .await
-        .context("send claude-codes user message")?;
+        .context("send claude user message")?;
 
     let mut responses = Vec::new();
     let mut active_session = session_id;
@@ -294,7 +294,7 @@ async fn query_with_control_handling(
         let output = client
             .receive()
             .await
-            .context("receive claude-codes message")?;
+            .context("receive claude message")?;
 
         if let Some(session) = output_session_id(&output) {
             active_session = session;
@@ -315,7 +315,7 @@ async fn query_with_control_handling(
                     client
                         .send_control_response(response)
                         .await
-                        .context("send claude-codes control response")?;
+                        .context("send claude control response")?;
                 }
                 ControlRequestPayload::HookCallback(_) | ControlRequestPayload::McpMessage(_) => {
                     client
@@ -337,7 +337,7 @@ async fn query_with_control_handling(
             && let Some(reply) = interactive_follow_up(&user.message.content, step)
         {
             run_log.record_confirmed(ConfirmedAction {
-                agent: "claudecode",
+                agent: "claude",
                 phase,
                 step: step_kind_label(step),
                 kind: "interactive",
@@ -349,7 +349,7 @@ async fn query_with_control_handling(
                     user.session_id.unwrap_or(active_session),
                 ))
                 .await
-                .context("send claude-codes interactive follow-up")?;
+                .context("send claude interactive follow-up")?;
         }
 
         let finished = matches!(&output, ClaudeOutput::Result(_));
@@ -489,7 +489,7 @@ fn permission_response(
     if perm.tool_name == "AskUserQuestion" {
         let answers = default_question_answers(perm)?;
         run_log.record_confirmed(ConfirmedAction {
-            agent: "claudecode",
+            agent: "claude",
             phase,
             step: step_kind_label(step),
             kind: "question",
@@ -575,7 +575,7 @@ fn log_claude_tool_confirmed(
 ) -> Result<()> {
     let input = serde_json::to_string(&perm.input).unwrap_or_else(|_| perm.input.to_string());
     run_log.record_confirmed(ConfirmedAction {
-        agent: "claudecode",
+        agent: "claude",
         phase,
         step: step_kind_label(step),
         kind: "tool",

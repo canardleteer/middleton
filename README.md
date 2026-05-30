@@ -41,8 +41,7 @@ implementation versus narrative hype.
 - **One agent backend:**
   - **OpenCode** (default): `opencode` on your `PATH` and **`OPENCODE_API_KEY`**
     (OpenCode Go / `opencode-go`, not OpenCode Zen)
-  - **Claude Code**: `claude` on your `PATH` with Claude Code authentication
-    configured
+  - **Claude**: `claude` on your `PATH` with authentication configured
   - **Codex**: `codex` on your `PATH` with Codex authentication configured
 - **PDF export** (optional; `--skip-pdf` to skip): **pandoc** and **xelatex**
   (falls back to **pdflatex**). On Ubuntu:
@@ -60,7 +59,7 @@ Middleton runs five analysis phases against the target directory using either
 OpenCode, Claude Code, or Codex. Each phase uses a plan → build workflow: the
 agent plans its analysis, then writes structured markdown artifacts under
 `.middleton/<agent>/` (for example `.middleton/opencode/` or
-`.middleton/claudecode/`), so outcomes from different agent backends stay
+`.middleton/claude/`), so outcomes from different agent backends stay
 separate. Analysis is **read-only** for the target corpus: the agent may use
 read-only git history and guarded web search **during the plan step only** (when
 the backend supports it), then transcribes findings during build. Middleton
@@ -211,10 +210,10 @@ export OPENCODE_API_KEY=your-key-here
 middleton /path/to/repo
 ```
 
-Review with Claude Code instead:
+Review with Claude instead:
 
 ```bash
-middleton /path/to/repo --agent claudecode --model sonnet
+middleton /path/to/repo --agent claude --model sonnet
 ```
 
 Review with Codex instead:
@@ -253,11 +252,11 @@ middleton --export-pdf /path/to/repo/.middleton/opencode
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--output`, `-o` | `./<repo-name>` | Clone destination when input is a git URL |
-| `--agent` | `opencode` | Agent backend: `opencode`, `claudecode`, or `codex` |
-| `--model` | `kimi-k2.5` | OpenCode Go catalog model id, `sonnet` / `opus` / `haiku` for Claude Code, or a Codex model id |
+| `--agent` | `opencode` | Agent backend: `opencode`, `claude`, or `codex` |
+| `--model` | `kimi-k2.5` | OpenCode Go catalog model id, `sonnet` / `opus` / `haiku` for Claude, or a Codex model id |
 | `--hostname` | `127.0.0.1` | OpenCode server bind hostname |
 | `--opencode` | `opencode` | Path to the OpenCode binary |
-| `--claude` | `claude` | Path to the Claude Code binary |
+| `--claude` | `claude` | Path to the Claude binary |
 | `--codex` | `codex` | Path to the Codex CLI binary |
 | `--log-level` | `info` | Log filter (`RUST_LOG`-style; overridden by `RUST_LOG` if set) |
 | `--pandoc` | `pandoc` | Pandoc binary used for PDF export |
@@ -276,14 +275,14 @@ those findings as external context. During **build**, agents only write
 | Backend | `repository` plan step | `documents` plan step |
 |---------|----------------------|----------------------|
 | OpenCode | File reads + bash/git + web | File reads + web only |
-| Claude Code | Reads + `Bash` + `WebSearch`/`WebFetch` | Reads + web tools; `Bash` disallowed |
+| Claude | Reads + `Bash` + `WebSearch`/`WebFetch` | Reads + web tools; `Bash` disallowed |
 | Codex | Network on; shell accepted in plan | Network on; shell declined in plan |
 
 Build steps for both profiles: file reads and `.middleton/` writes only — no shell,
 git, or web.
 
 Middleton auto-answers tool permission prompts, user-input questions, and Codex
-approval requests so Claude Code and Codex runs do not block waiting for a human
+approval requests so Claude and Codex runs do not block waiting for a human
 in the terminal.
 
 Each run appends to `.middleton/<agent>/actions.log`: run timestamp, CLI
@@ -296,7 +295,7 @@ All artifacts are written to `<target>/.middleton/<agent>/`:
 
 ```text
 .middleton/
-└── opencode/              # or claudecode/, codex/, etc.
+└── opencode/              # or claude/, codex/, etc.
     ├── INTENT-SCAN-1.md    # Documentation-layer intent scan
     ├── INTENT-SCAN-2.md    # Codebase or cross-document intent scan (profile-dependent)
     ├── DEPTH.md            # Hollow vs. tangible substance analysis

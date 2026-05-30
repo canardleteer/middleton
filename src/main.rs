@@ -42,7 +42,7 @@ use crate::session::run_plan_build_phase as run_opencode_plan_build_phase;
 #[derive(Parser)]
 #[command(
     name = "middleton",
-    about = "Run prosecution/defense/judgement review via OpenCode, Claude Code, or Codex"
+    about = "Run prosecution/defense/judgement review via OpenCode, Claude, or Codex"
 )]
 struct Cli {
     /// Local directory or git repository URL
@@ -62,7 +62,7 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = AgentKind::OpenCode)]
     agent: AgentKind,
 
-    /// Model id for the selected agent (OpenCode Go catalog id, sonnet/opus/haiku for Claude Code, or a Codex model id)
+    /// Model id for the selected agent (OpenCode Go catalog id, sonnet/opus/haiku for Claude, or a Codex model id)
     #[arg(long, default_value = "kimi-k2.5")]
     model: String,
 
@@ -74,7 +74,7 @@ struct Cli {
     #[arg(long, default_value = "opencode")]
     opencode: String,
 
-    /// Claude Code binary path
+    /// Claude binary path
     #[arg(long, default_value = "claude")]
     claude: String,
 
@@ -213,7 +213,7 @@ async fn start_agent_runtime(target: &Path, cli: &Cli) -> Result<AgentRuntime> {
             let runtime = claude_agent::start_runtime(&cli.claude).await?;
             info!(
                 provider_model = claude_model_label(claude_model(&cli.model)),
-                "Claude Code client ready"
+                "Claude client ready"
             );
             Ok(AgentRuntime::ClaudeCode(runtime))
         }
@@ -235,7 +235,7 @@ async fn stop_agent_runtime(runtime: AgentRuntime) -> Result<()> {
             info!("OpenCode server stopped");
         }
         AgentRuntime::ClaudeCode(_) => {
-            info!("Claude Code sessions complete");
+            info!("Claude sessions complete");
         }
         AgentRuntime::Codex(runtime) => {
             codex_agent::stop_runtime(runtime).await?;
