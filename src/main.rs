@@ -3,6 +3,8 @@ mod agent;
 mod claude_agent;
 #[allow(clippy::too_many_arguments)]
 mod codex_agent;
+mod epub;
+mod export_common;
 mod manifest;
 mod opencode;
 mod output;
@@ -46,7 +48,7 @@ use crate::session::run_plan_build_phase as run_opencode_plan_build_phase;
 )]
 struct Cli {
     /// Local directory or git repository URL
-    #[arg(required_unless_present = "export_pdf")]
+    #[arg(required_unless_present_any = ["export_pdf", "export_epub"])]
     input: Option<String>,
 
     /// Clone/output directory when input is a git URL (default: ./<repo-name> in CWD)
@@ -57,6 +59,11 @@ struct Cli {
     /// already have a matching `.pdf`
     #[arg(long, value_name = "DIR")]
     export_pdf: Option<PathBuf>,
+
+    /// Export markdown files in a `.middleton/<agent>` directory to EPUB, skipping files that
+    /// already have a matching `.epub`
+    #[arg(long, value_name = "DIR")]
+    export_epub: Option<PathBuf>,
 
     /// Agent backend to run analysis phases
     #[arg(long, value_enum, default_value_t = AgentKind::OpenCode)]
@@ -86,13 +93,17 @@ struct Cli {
     #[arg(long, default_value = "info")]
     log_level: String,
 
-    /// Pandoc binary path for PDF export
+    /// Pandoc binary path for PDF and EPUB export
     #[arg(long, default_value = "pandoc")]
     pandoc: String,
 
     /// Skip pandoc PDF export at the end
     #[arg(long)]
     skip_pdf: bool,
+
+    /// Skip pandoc EPUB export at the end
+    #[arg(long)]
+    skip_epub: bool,
 
     /// Additional context about the artifact under review, prepended to all analysis prompts
     #[arg(long)]
@@ -118,10 +129,13 @@ async fn main() -> Result<()> {
         return run_export_pdf(middleton_dir, &cli.pandoc);
     }
 
-    let input = cli
-        .input
-        .as_deref()
-        .context("input path or git URL is required unless --export-pdf is used")?;
+    if let Some(middleton_dir) = &cli.export_epub {
+        return run_export_epub(middleton_dir, &cli.pandoc);
+    }
+
+    let input = cli.input.as_deref().context(
+        "input path or git URL is required unless --export-pdf or --export-epub is used",
+    )?;
 
     if cli.agent == AgentKind::OpenCode {
         ensure_opencode_go_api_key()?;
@@ -187,6 +201,23 @@ async fn main() -> Result<()> {
             );
         }
     }
+
+    if !cli.skip_epub {
+        let epubs = epub::export_markdown_epubs(&artifacts.dir, &cli.pandoc)?;
+        info!(
+            count = epubs.len(),
+            dir = %artifacts.dir.display(),
+            "phase epub export complete"
+        );
+        if let Some(ref trial_md) = trial_md {
+            let trial_epub = epub::export_markdown_file(&artifacts.dir, &cli.pandoc, trial_md)?;
+            info!(
+                markdown = %trial_md.display(),
+                epub = %trial_epub.display(),
+                "trial epub export complete"
+            );
+        }
+    }
     info!(
         target = %target.display(),
         manifest_path = %artifacts.join("sessions.json").display(),
@@ -245,6 +276,36 @@ async fn stop_agent_runtime(runtime: AgentRuntime) -> Result<()> {
     Ok(())
 }
 
+fn run_export_epub(middleton_dir: &Path, pandoc: &str) -> Result<()> {
+    if !middleton_dir.is_dir() {
+        bail!(
+            "--export-epub path is not a directory: {}",
+            middleton_dir.display()
+        );
+    }
+
+    info!(dir = %middleton_dir.display(), "exporting missing markdown epubs");
+    let trial_md = trial::compile(middleton_dir)?;
+    let epubs = epub::export_missing_markdown_epubs(middleton_dir, pandoc)?;
+    if let Some(trial_md) = trial_md {
+        let trial_epub = trial::trial_markdown_path(middleton_dir).with_extension("epub");
+        if !trial_epub.exists() {
+            let exported = epub::export_markdown_file(middleton_dir, pandoc, &trial_md)?;
+            info!(
+                markdown = %trial_md.display(),
+                epub = %exported.display(),
+                "trial epub export complete"
+            );
+        }
+    }
+    info!(
+        count = epubs.len(),
+        dir = %middleton_dir.display(),
+        "epub export complete"
+    );
+    Ok(())
+}
+
 fn run_export_pdf(middleton_dir: &Path, pandoc: &str) -> Result<()> {
     if !middleton_dir.is_dir() {
         bail!(
@@ -287,6 +348,7 @@ fn run_options_from_cli(cli: &Cli, target: &Path, input: &str) -> RunOptions {
         claude_bin: cli.claude.clone(),
         codex_bin: cli.codex.clone(),
         skip_pdf: cli.skip_pdf,
+        skip_epub: cli.skip_epub,
         note_present: cli
             .note
             .as_ref()

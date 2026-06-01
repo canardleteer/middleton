@@ -44,7 +44,8 @@ implementation versus narrative hype.
   - **Claude**: `claude` on your `PATH` with authentication configured
   - **Codex**: `codex` on your `PATH` with Codex authentication configured
 - **PDF export** (optional; `--skip-pdf` to skip): **pandoc** and **xelatex**
-  (falls back to **pdflatex**). On Ubuntu:
+  (falls back to **pdflatex**). Body text uses **DejaVu Sans** for broad symbol
+  coverage in agent-generated prose. On Ubuntu:
 
   ```bash
   sudo apt install pandoc texlive-xetex texlive-latex-recommended \
@@ -52,6 +53,10 @@ implementation versus narrative hype.
   ```
 
   Debian: see [`Dockerfile`](Dockerfile) (`runtime-base` apt/CTAN setup).
+- **eBook export (EPUB3)** (optional; `--skip-epub` to skip): **pandoc** only (no
+  TeX). **`fonts-dejavu`** is recommended so embedded typography matches the
+  styled export. Independent of PDF — you can export EPUB without installing
+  xelatex.
 
 ## How it works
 
@@ -141,9 +146,10 @@ The binary is written to `target/release/middleton`.
 > wouldn't pay to run full end-to-end trials against each one. Treat this path as
 > experimental; expect breakage.
 
-Images bundle the `middleton` binary, pandoc/TeX for PDF export, and one agent
-backend per runtime target. See [`Dockerfile`](Dockerfile) for build stages and
-[`compose.yaml`](compose.yaml) for service definitions.
+Images bundle the `middleton` binary, pandoc/TeX for PDF export, pandoc/fonts
+for EPUB3 export, and one agent backend per runtime target. See
+[`Dockerfile`](Dockerfile) for build stages and [`compose.yaml`](compose.yaml)
+for service definitions.
 
 ### Build
 
@@ -247,6 +253,13 @@ have a matching `.pdf`:
 middleton --export-pdf /path/to/repo/.middleton/opencode
 ```
 
+Export EPUBs for an existing agent artifact directory, skipping files that already
+have a matching `.epub`:
+
+```bash
+middleton --export-epub /path/to/repo/.middleton/opencode
+```
+
 ### Options
 
 | Flag | Default | Description |
@@ -259,9 +272,11 @@ middleton --export-pdf /path/to/repo/.middleton/opencode
 | `--claude` | `claude` | Path to the Claude binary |
 | `--codex` | `codex` | Path to the Codex CLI binary |
 | `--log-level` | `info` | Log filter (`RUST_LOG`-style; overridden by `RUST_LOG` if set) |
-| `--pandoc` | `pandoc` | Pandoc binary used for PDF export |
+| `--pandoc` | `pandoc` | Pandoc binary used for PDF and EPUB export |
 | `--skip-pdf` | — | Skip pandoc PDF export at the end |
+| `--skip-epub` | — | Skip pandoc EPUB export at the end |
 | `--export-pdf` | — | Export only markdown files in `DIR` that do not yet have a `.pdf` (skips the trial pipeline) |
+| `--export-epub` | — | Export only markdown files in `DIR` that do not yet have a `.epub` (skips the trial pipeline) |
 | `--note` | — | Additional context prepended to all analysis prompts |
 | `--profile` | `repository` | Corpus lens: `repository` or `documents` |
 
@@ -304,8 +319,10 @@ All artifacts are written to `<target>/.middleton/<agent>/`:
     ├── JUDGEMENT.md        # Middle-ground legitimacy verdict
     ├── TRIAL.md            # Consolidated record (generated at end)
     ├── TRIAL.pdf           # Consolidated PDF (unless --skip-pdf)
+    ├── TRIAL.epub          # Consolidated EPUB (unless --skip-epub)
     ├── sessions.json       # Session IDs per phase
     ├── INTENT-SCAN-1.pdf   # Styled PDF export (and matching PDFs for each .md)
+    ├── INTENT-SCAN-1.epub  # Styled EPUB export (and matching EPUBs for each .md)
     └── ...
 ```
 
@@ -317,6 +334,13 @@ markdown artifacts (for example the intent scans). Each source file is kept;
 Unless `--skip-pdf` is set, middleton then runs **pandoc** on every phase `.md`
 file and on `TRIAL.md`, writing matching `.pdf` files with numbered sections, a
 table of contents, syntax highlighting, and a styled header/footer.
+
+Unless `--skip-epub` is set, middleton runs **pandoc** on the same markdown files,
+writing matching `.epub` files (EPUB3) with the same structure and middleton
+branding. Export pre-processes agent markdown before pandoc: standalone `---`
+horizontal-rule lines are rewritten so they are not parsed as YAML; legacy
+`* **A)**` quiz-style bullets are normalized to lettered lists; metadata (`title`,
+`author`, `lang`) is set via the pandoc CLI, not YAML front matter in the reports.
 
 The target repository itself is not modified beyond the `.middleton/<agent>/`
 directory.

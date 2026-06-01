@@ -20,6 +20,7 @@ RUN cargo build --release
 ARG DEBIAN_VERSION=trixie
 FROM debian:${DEBIAN_VERSION}-slim AS runtime-base
 
+# PDF: pandoc + TeX Live (xelatex/pdflatex). EPUB3: pandoc + fonts-dejavu (embed).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
