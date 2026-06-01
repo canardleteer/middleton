@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use tracing::{info, warn};
 
-use crate::pdf::format_report_title;
+use crate::export_common::format_report_title;
 
 const TRIAL_FILENAME: &str = "TRIAL.md";
 

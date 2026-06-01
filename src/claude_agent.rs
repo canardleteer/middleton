@@ -231,9 +231,7 @@ async fn run_step(req: StepRequest<'_>) -> Result<(String, Vec<ClaudeOutput>)> {
         .iter()
         .rev()
         .find_map(ClaudeOutput::as_result)
-        .with_context(|| {
-            format!("claude {step:?} step did not return a result for {phase}")
-        })?;
+        .with_context(|| format!("claude {step:?} step did not return a result for {phase}"))?;
 
     if result.is_error {
         bail!(
@@ -247,9 +245,7 @@ async fn run_step(req: StepRequest<'_>) -> Result<(String, Vec<ClaudeOutput>)> {
         .rev()
         .find_map(|o| o.session_id().map(str::to_string))
         .or_else(|| Some(result.session_id.clone()))
-        .with_context(|| {
-            format!("claude {step:?} step did not return a session id for {phase}")
-        })?;
+        .with_context(|| format!("claude {step:?} step did not return a session id for {phase}"))?;
 
     Ok((session_id, responses))
 }
@@ -291,10 +287,7 @@ async fn query_with_control_handling(
     let mut responses = Vec::new();
     let mut active_session = session_id;
     loop {
-        let output = client
-            .receive()
-            .await
-            .context("receive claude message")?;
+        let output = client.receive().await.context("receive claude message")?;
 
         if let Some(session) = output_session_id(&output) {
             active_session = session;

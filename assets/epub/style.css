@@ -1,0 +1,94 @@
+/* EPUB styling for middleton trial report export (pandoc --css). */
+
+body {
+  font-family: "DejaVu Serif", Georgia, "Times New Roman", Times, serif;
+  line-height: 1.5;
+  max-width: 36em;
+  margin: 1em auto;
+  hyphens: auto;
+  color: #1b2a4a;
+}
+
+p {
+  margin: 0.75em 0;
+  text-align: justify;
+}
+
+h1 {
+  font-family: "DejaVu Sans", Helvetica, Arial, sans-serif;
+  font-size: 1.75em;
+  font-weight: 600;
+  color: #1b2a4a;
+  margin: 1.25em 0 0.75em;
+  line-height: 1.2;
+}
+
+h2 {
+  font-family: "DejaVu Sans", Helvetica, Arial, sans-serif;
+  font-size: 1.35em;
+  font-weight: 600;
+  color: #1b2a4a;
+  margin: 1.5em 0 0.5em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid #5c6773;
+}
+
+h3 {
+  font-family: "DejaVu Sans", Helvetica, Arial, sans-serif;
+  font-size: 1.1em;
+  font-weight: 600;
+  color: #2e6da4;
+  margin: 1.2em 0 0.4em;
+}
+
+a {
+  color: #2e6da4;
+}
+
+nav#TOC {
+  margin: 1.5em 0 2em;
+  color: #5c6773;
+}
+
+nav#TOC ul {
+  padding-left: 1.25em;
+}
+
+blockquote {
+  margin: 1em 1.5em;
+  font-style: italic;
+  color: #5c6773;
+}
+
+pre,
+code {
+  font-family: "DejaVu Sans Mono", "Courier New", monospace;
+  font-size: 0.92em;
+}
+
+pre {
+  background: #f4f6f8;
+  padding: 0.75em 1em;
+  overflow-x: auto;
+  border-left: 3px solid #2e6da4;
+}
+
+ol[type="A"] {
+  margin: 0.65em 0 1.1em;
+  padding-left: 1.75em;
+  line-height: 1.45;
+}
+
+ol[type="A"] li {
+  margin: 0.4em 0;
+}
+
+ol[type="a"] {
+  margin: 0.65em 0 1.1em;
+  padding-left: 1.75em;
+  line-height: 1.45;
+}
+
+ol[type="a"] li {
+  margin: 0.35em 0;
+}

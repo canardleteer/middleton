@@ -32,6 +32,7 @@ pub struct RunOptions {
     pub claude_bin: String,
     pub codex_bin: String,
     pub skip_pdf: bool,
+    pub skip_epub: bool,
     pub note_present: bool,
 }
 
@@ -83,6 +84,7 @@ opencode_bin={opencode_bin}\n\
 claude_bin={claude_bin}\n\
 codex_bin={codex_bin}\n\
 skip_pdf={skip_pdf}\n\
+skip_epub={skip_epub}\n\
 note_present={note_present}\n\
 ================================================================================\n",
             input = options.input,
@@ -94,6 +96,7 @@ note_present={note_present}\n\
             claude_bin = options.claude_bin,
             codex_bin = options.codex_bin,
             skip_pdf = options.skip_pdf,
+            skip_epub = options.skip_epub,
             note_present = options.note_present,
         );
         self.write_block(&block)?;
@@ -181,6 +184,7 @@ mod tests {
             claude_bin: "claude".to_string(),
             codex_bin: "codex".to_string(),
             skip_pdf: false,
+            skip_epub: false,
             note_present: true,
         })
         .unwrap();
