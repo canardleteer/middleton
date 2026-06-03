@@ -5,6 +5,7 @@ mod claude_agent;
 mod codex_agent;
 mod epub;
 mod export_common;
+mod git_scope;
 mod manifest;
 mod opencode;
 mod output;
@@ -55,12 +56,12 @@ struct Cli {
     #[arg(short, long)]
     output: Option<PathBuf>,
 
-    /// Export markdown files in a `.middleton/<agent>` directory to PDF, skipping files that
+    /// Export markdown files in a Middleton run directory to PDF, skipping files that
     /// already have a matching `.pdf`
     #[arg(long, value_name = "DIR")]
     export_pdf: Option<PathBuf>,
 
-    /// Export markdown files in a `.middleton/<agent>` directory to EPUB, skipping files that
+    /// Export markdown files in a Middleton run directory to EPUB, skipping files that
     /// already have a matching `.epub`
     #[arg(long, value_name = "DIR")]
     export_epub: Option<PathBuf>,
@@ -142,10 +143,12 @@ async fn main() -> Result<()> {
     }
 
     let target = target::resolve_target(input, &cli.output)?;
-    let artifacts = ArtifactPaths::new(&target, cli.agent);
+    let artifacts = ArtifactPaths::new(&target, cli.agent, &cli.model);
     artifacts
         .ensure_dir()
         .with_context(|| format!("create {}", artifacts.dir.display()))?;
+
+    persist_reviewer_note(&artifacts, cli.note.as_deref())?;
 
     let run_log = Arc::new(RunLog::open(&artifacts)?);
     run_log.record_run_start(&run_options_from_cli(&cli, &target, input))?;
@@ -162,7 +165,7 @@ async fn main() -> Result<()> {
     );
 
     let runtime = start_agent_runtime(&target, &cli).await?;
-    let mut manifest = SessionManifest::load_or_default(&target, cli.agent)?;
+    let mut manifest = SessionManifest::load_or_default(&artifacts)?;
 
     let pipeline_result = run_pipeline(
         &runtime,
@@ -176,7 +179,7 @@ async fn main() -> Result<()> {
     .await;
 
     if pipeline_result.is_err() {
-        let _ = manifest.save(&target, cli.agent);
+        let _ = manifest.save(&artifacts);
     }
 
     stop_agent_runtime(runtime).await?;
@@ -218,6 +221,8 @@ async fn main() -> Result<()> {
             );
         }
     }
+    git_scope::warn_if_middleton_not_gitignored(&target);
+
     info!(
         target = %target.display(),
         manifest_path = %artifacts.join("sessions.json").display(),
@@ -227,6 +232,26 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|| "not created".to_string()),
         "middleton complete"
     );
+    Ok(())
+}
+
+fn persist_reviewer_note(artifacts: &ArtifactPaths, note: Option<&str>) -> Result<()> {
+    let Some(note) = note.map(str::trim).filter(|note| !note.is_empty()) else {
+        return Ok(());
+    };
+
+    let context_dir = artifacts.join("context");
+    std::fs::create_dir_all(&context_dir)
+        .with_context(|| format!("create reviewer note directory {}", context_dir.display()))?;
+    let note_path = context_dir.join("reviewer-note.md");
+    let contents = format!(
+        "# Private reviewer context\n\n\
+This note was supplied by the person requesting the analysis. It is not part of the \
+public trial record.\n\n\
+{note}\n"
+    );
+    std::fs::write(&note_path, contents)
+        .with_context(|| format!("write reviewer note {}", note_path.display()))?;
     Ok(())
 }
 
@@ -365,7 +390,6 @@ async fn run_pipeline(
     note: Option<&str>,
     run_log: Arc<RunLog>,
 ) -> Result<()> {
-    let target = &artifacts.target;
     let prompts = PhasePrompts::new(artifacts, profile);
     let intent_plan = with_note(&prompts.intent_plan, note);
     let intent_build = with_note(&prompts.intent_build, note);
@@ -391,7 +415,7 @@ async fn run_pipeline(
     let (intent_id, depth_id) = tokio::try_join!(
         run_phase(
             runtime,
-            target,
+            artifacts,
             model,
             profile,
             "intent",
@@ -402,7 +426,7 @@ async fn run_pipeline(
         ),
         run_phase(
             runtime,
-            target,
+            artifacts,
             model,
             profile,
             "depth",
@@ -415,12 +439,12 @@ async fn run_pipeline(
 
     manifest.set("intent", intent_id);
     manifest.set("depth", depth_id);
-    manifest.save(target, artifacts.agent)?;
+    manifest.save(artifacts)?;
 
     let prosecution_outputs = [prosecution_output.as_path()];
     let prosecution_id = run_phase(
         runtime,
-        target,
+        artifacts,
         model,
         profile,
         "prosecution",
@@ -431,12 +455,12 @@ async fn run_pipeline(
     )
     .await?;
     manifest.set("prosecution", prosecution_id);
-    manifest.save(target, artifacts.agent)?;
+    manifest.save(artifacts)?;
 
     let defense_outputs = [defense_output.as_path()];
     let defense_id = run_phase(
         runtime,
-        target,
+        artifacts,
         model,
         profile,
         "defense",
@@ -447,12 +471,12 @@ async fn run_pipeline(
     )
     .await?;
     manifest.set("defense", defense_id);
-    manifest.save(target, artifacts.agent)?;
+    manifest.save(artifacts)?;
 
     let judgement_outputs = [judgement_output.as_path()];
     let judgement_id = run_phase(
         runtime,
-        target,
+        artifacts,
         model,
         profile,
         "judgement",
@@ -463,7 +487,7 @@ async fn run_pipeline(
     )
     .await?;
     manifest.set("judgement", judgement_id);
-    manifest.save(target, artifacts.agent)?;
+    manifest.save(artifacts)?;
 
     Ok(())
 }
@@ -471,7 +495,7 @@ async fn run_pipeline(
 #[allow(clippy::too_many_arguments)]
 async fn run_phase(
     runtime: &AgentRuntime,
-    target: &Path,
+    artifacts: &ArtifactPaths,
     model: &str,
     profile: ReviewProfile,
     phase: &str,
@@ -480,6 +504,8 @@ async fn run_phase(
     expected_outputs: &[&Path],
     run_log: Arc<RunLog>,
 ) -> Result<String> {
+    let target = &artifacts.target;
+    let write_prefix = artifacts.rel_prefix.as_str();
     match runtime {
         AgentRuntime::OpenCode(runtime) => {
             let model = opencode_go_model(model);
@@ -490,6 +516,7 @@ async fn run_phase(
                 build_prompt,
                 &model,
                 profile,
+                write_prefix,
                 expected_outputs,
                 run_log,
             )
@@ -505,6 +532,7 @@ async fn run_phase(
                 model,
                 profile,
                 target,
+                write_prefix,
                 expected_outputs,
                 run_log,
             )
@@ -520,6 +548,7 @@ async fn run_phase(
                 model.as_deref(),
                 profile,
                 target,
+                write_prefix,
                 expected_outputs,
                 run_log,
             )

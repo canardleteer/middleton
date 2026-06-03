@@ -39,6 +39,7 @@ pub async fn run_plan_build_phase(
     build_prompt: &str,
     model: &ModelRef,
     profile: ReviewProfile,
+    write_prefix: &str,
     expected_outputs: &[&Path],
     run_log: Arc<RunLog>,
 ) -> Result<String> {
@@ -65,6 +66,7 @@ pub async fn run_plan_build_phase(
         profile,
         SessionStep::Plan,
         phase,
+        write_prefix,
         &run_log,
         true,
     )
@@ -78,6 +80,7 @@ pub async fn run_plan_build_phase(
         profile,
         SessionStep::Build,
         phase,
+        write_prefix,
         &run_log,
         true,
     )
@@ -89,6 +92,7 @@ pub async fn run_plan_build_phase(
         &mut subscription,
         model,
         profile,
+        write_prefix,
         expected_outputs,
         phase,
         &run_log,
@@ -112,6 +116,7 @@ async fn ensure_build_outputs(
     subscription: &mut opencode_rs::sse::SseSubscription<Event>,
     model: &ModelRef,
     profile: ReviewProfile,
+    write_prefix: &str,
     expected_outputs: &[&Path],
     phase: &str,
     run_log: &RunLog,
@@ -140,6 +145,7 @@ async fn ensure_build_outputs(
             profile,
             SessionStep::Build,
             phase,
+            write_prefix,
             run_log,
             true,
         )
@@ -189,6 +195,7 @@ async fn wait_until_idle(
     profile: ReviewProfile,
     step: SessionStep,
     phase: &str,
+    write_prefix: &str,
     run_log: &RunLog,
     dispatched_new_work: bool,
 ) -> Result<()> {
@@ -226,6 +233,7 @@ async fn wait_until_idle(
                     profile,
                     step,
                     phase,
+                    write_prefix,
                     run_log,
                     &mut last_activity,
                 )
@@ -238,7 +246,15 @@ async fn wait_until_idle(
             }
 
             _ = poll_interval.tick() => {
-                if handle_pending_interactions(client, session_id, profile, step, phase, run_log)
+                if handle_pending_interactions(
+                    client,
+                    session_id,
+                    profile,
+                    step,
+                    phase,
+                    write_prefix,
+                    run_log,
+                )
                     .await?
                 {
                     observed_busy = true;
@@ -308,6 +324,7 @@ async fn handle_event(
     profile: ReviewProfile,
     step: SessionStep,
     phase: &str,
+    write_prefix: &str,
     run_log: &RunLog,
     last_activity: &mut tokio::time::Instant,
 ) -> Result<bool> {
@@ -325,7 +342,16 @@ async fn handle_event(
             bail!("session {session_id} failed: {message}");
         }
         Event::PermissionAsked { properties } => {
-            reply_permission(client, &properties.request, profile, step, phase, run_log).await?;
+            reply_permission(
+                client,
+                &properties.request,
+                profile,
+                step,
+                phase,
+                write_prefix,
+                run_log,
+            )
+            .await?;
             *last_activity = tokio::time::Instant::now();
             Ok(false)
         }
@@ -350,6 +376,7 @@ async fn handle_pending_interactions(
     profile: ReviewProfile,
     step: SessionStep,
     phase: &str,
+    write_prefix: &str,
     run_log: &RunLog,
 ) -> Result<bool> {
     let permissions = client.permissions().list().await.unwrap_or_else(|error| {
@@ -361,7 +388,16 @@ async fn handle_pending_interactions(
         .into_iter()
         .find(|request| request.session_id == session_id)
     {
-        reply_permission(client, &permission, profile, step, phase, run_log).await?;
+        reply_permission(
+            client,
+            &permission,
+            profile,
+            step,
+            phase,
+            write_prefix,
+            run_log,
+        )
+        .await?;
         return Ok(true);
     }
 
@@ -387,9 +423,10 @@ async fn reply_permission(
     profile: ReviewProfile,
     step: SessionStep,
     phase: &str,
+    write_prefix: &str,
     run_log: &RunLog,
 ) -> Result<()> {
-    let reply = permission_reply(request, profile, step);
+    let reply = permission_reply(request, profile, step, write_prefix);
 
     if reply != PermissionReply::Reject {
         let patterns = request.patterns.join(", ");
@@ -434,13 +471,14 @@ fn permission_reply(
     request: &PermissionRequest,
     profile: ReviewProfile,
     step: SessionStep,
+    write_prefix: &str,
 ) -> PermissionReply {
     let permission = request.permission.to_ascii_lowercase();
     let allow = crate::agent::opencode_permission_reply(
         profile,
         &permission,
         step == SessionStep::Plan,
-        writes_middleton_only(&request.patterns),
+        writes_artifact_dir_only(&request.patterns, write_prefix),
         is_read_permission(&permission),
         is_write_permission(&permission),
     );
@@ -459,11 +497,11 @@ fn is_write_permission(permission: &str) -> bool {
     permission.contains("write") || permission.contains("edit") || permission.contains("create")
 }
 
-fn writes_middleton_only(patterns: &[String]) -> bool {
+fn writes_artifact_dir_only(patterns: &[String], write_prefix: &str) -> bool {
     !patterns.is_empty()
         && patterns
             .iter()
-            .all(|pattern| pattern.contains(".middleton/") || pattern.ends_with(".middleton"))
+            .all(|pattern| crate::paths::allows_write_path(pattern, write_prefix, Path::new("")))
 }
 
 fn session_step_label(step: SessionStep) -> &'static str {
@@ -523,6 +561,8 @@ async fn reply_question(
 mod tests {
     use super::*;
 
+    const TEST_WRITE_PREFIX: &str = ".middleton/opencode/kimi-k2-5/20250602-1430";
+
     fn request(permission: &str, patterns: &[&str]) -> PermissionRequest {
         PermissionRequest {
             id: "req-1".to_string(),
@@ -544,7 +584,8 @@ mod tests {
             permission_reply(
                 &request("file.read", &["src/main.rs"]),
                 ReviewProfile::Repository,
-                SessionStep::Plan
+                SessionStep::Plan,
+                TEST_WRITE_PREFIX,
             ),
             PermissionReply::Once
         );
@@ -552,7 +593,8 @@ mod tests {
             permission_reply(
                 &request("bash.execute", &["git log --oneline -20"]),
                 ReviewProfile::Repository,
-                SessionStep::Plan
+                SessionStep::Plan,
+                TEST_WRITE_PREFIX,
             ),
             PermissionReply::Once
         );
@@ -560,7 +602,8 @@ mod tests {
             permission_reply(
                 &request("network.fetch", &["https://example.com"]),
                 ReviewProfile::Repository,
-                SessionStep::Plan
+                SessionStep::Plan,
+                TEST_WRITE_PREFIX,
             ),
             PermissionReply::Once
         );
@@ -572,7 +615,8 @@ mod tests {
             permission_reply(
                 &request("network.fetch", &["https://example.com"]),
                 ReviewProfile::Documents,
-                SessionStep::Plan
+                SessionStep::Plan,
+                TEST_WRITE_PREFIX,
             ),
             PermissionReply::Once
         );
@@ -580,7 +624,8 @@ mod tests {
             permission_reply(
                 &request("bash.execute", &["git log"]),
                 ReviewProfile::Documents,
-                SessionStep::Plan
+                SessionStep::Plan,
+                TEST_WRITE_PREFIX,
             ),
             PermissionReply::Reject
         );
@@ -592,7 +637,8 @@ mod tests {
             permission_reply(
                 &request("tool.install", &["cargo"]),
                 ReviewProfile::Repository,
-                SessionStep::Plan
+                SessionStep::Plan,
+                TEST_WRITE_PREFIX,
             ),
             PermissionReply::Reject
         );
@@ -602,9 +648,13 @@ mod tests {
     fn plan_rejects_writes() {
         assert_eq!(
             permission_reply(
-                &request("file.write", &["/repo/.middleton/DEPTH.md"]),
+                &request(
+                    "file.write",
+                    &["/repo/.middleton/opencode/kimi-k2-5/20250602-1430/DEPTH.md"],
+                ),
                 ReviewProfile::Repository,
-                SessionStep::Plan
+                SessionStep::Plan,
+                TEST_WRITE_PREFIX,
             ),
             PermissionReply::Reject
         );
@@ -614,9 +664,13 @@ mod tests {
     fn build_allows_middleton_writes_only() {
         assert_eq!(
             permission_reply(
-                &request("file.write", &["/repo/.middleton/DEPTH.md"]),
+                &request(
+                    "file.write",
+                    &["/repo/.middleton/opencode/kimi-k2-5/20250602-1430/DEPTH.md"],
+                ),
                 ReviewProfile::Repository,
-                SessionStep::Build
+                SessionStep::Build,
+                TEST_WRITE_PREFIX,
             ),
             PermissionReply::Once
         );
@@ -624,7 +678,8 @@ mod tests {
             permission_reply(
                 &request("file.write", &["/repo/src/main.rs"]),
                 ReviewProfile::Repository,
-                SessionStep::Build
+                SessionStep::Build,
+                TEST_WRITE_PREFIX,
             ),
             PermissionReply::Reject
         );
@@ -636,7 +691,8 @@ mod tests {
             permission_reply(
                 &request("bash.execute", &["cargo run -p rebuild-rs"]),
                 ReviewProfile::Repository,
-                SessionStep::Build
+                SessionStep::Build,
+                TEST_WRITE_PREFIX,
             ),
             PermissionReply::Reject
         );

@@ -166,7 +166,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("repo");
         fs::create_dir_all(&target).unwrap();
-        (dir, ArtifactPaths::new(&target, AgentKind::OpenCode))
+        (
+            dir,
+            ArtifactPaths::new(&target, AgentKind::OpenCode, "kimi-k2.5"),
+        )
     }
 
     #[test]
@@ -208,6 +211,11 @@ mod tests {
     fn log_file_lives_under_middleton_agent_dir() {
         let (_dir, artifacts) = temp_artifacts();
         let log = RunLog::open(&artifacts).unwrap();
-        assert!(log.path().ends_with(".middleton/opencode/actions.log"));
+        assert!(
+            log.path()
+                .to_string_lossy()
+                .contains(".middleton/opencode/")
+                && log.path().ends_with("actions.log")
+        );
     }
 }

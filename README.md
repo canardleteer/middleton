@@ -63,16 +63,15 @@ implementation versus narrative hype.
 Middleton runs five analysis phases against the target directory using either
 OpenCode, Claude Code, or Codex. Each phase uses a plan → build workflow: the
 agent plans its analysis, then writes structured markdown artifacts under
-`.middleton/<agent>/` (for example `.middleton/opencode/` or
-`.middleton/claude/`), so outcomes from different agent backends stay
-separate. Analysis is **read-only** for the target corpus: the agent may use
-read-only git history and guarded web search **during the plan step only** (when
-the backend supports it), then transcribes findings during build. Middleton
-rejects installs, builds, tests, and target-corpus writes; build steps may only
-write under `.middleton/<agent>/`.
+`<target>/.middleton/<agent>/<model>/<timestamp>/` (for example
+`.middleton/opencode/kimi-k2-5/20250602-1430/`), so each run is isolated and
+outcomes from different agent backends stay separate. Analysis is **read-only**
+for the target corpus: the agent may use read-only git history and guarded web
+search **during the plan step only** (when the backend supports it), then
+transcribes findings during build. Middleton rejects installs, builds, tests, and
+target-corpus writes; build steps may only write under the current run directory.
 
-Session IDs are recorded in `.middleton/<agent>/sessions.json` so you can resume
-or inspect individual phases later.
+Session IDs are recorded in each run's `sessions.json`.
 
 ```mermaid
 flowchart TB
@@ -246,18 +245,18 @@ Clone to a specific directory:
 middleton https://github.com/org/some-repo.git --output /tmp/some-repo
 ```
 
-Export PDFs for an existing agent artifact directory, skipping files that already
-have a matching `.pdf`:
+Export PDFs for an existing run directory, skipping files that already have a
+matching `.pdf`:
 
 ```bash
-middleton --export-pdf /path/to/repo/.middleton/opencode
+middleton --export-pdf /path/to/repo/.middleton/opencode/kimi-k2-5/20250602-1430
 ```
 
-Export EPUBs for an existing agent artifact directory, skipping files that already
-have a matching `.epub`:
+Export EPUBs for an existing run directory, skipping files that already have a
+matching `.epub`:
 
 ```bash
-middleton --export-epub /path/to/repo/.middleton/opencode
+middleton --export-epub /path/to/repo/.middleton/opencode/kimi-k2-5/20250602-1430
 ```
 
 ### Options
@@ -284,8 +283,8 @@ middleton --export-epub /path/to/repo/.middleton/opencode
 
 During the **plan** step, agents may optionally use read-only `git` commands and
 guarded web search/fetch to corroborate external claims; prompts require labeling
-those findings as external context. During **build**, agents only write
-`.middleton/<agent>/` markdown from the completed plan — no new investigation.
+those findings as external context. During **build**, agents only write markdown
+into the current run directory from the completed plan — no new investigation.
 
 | Backend | `repository` plan step | `documents` plan step |
 |---------|----------------------|----------------------|
@@ -300,31 +299,66 @@ Middleton auto-answers tool permission prompts, user-input questions, and Codex
 approval requests so Claude and Codex runs do not block waiting for a human
 in the terminal.
 
-Each run appends to `.middleton/<agent>/actions.log`: run timestamp, CLI
-options, target path, and every action middleton confirmed on your behalf (also
-logged at `info` level).
+Each run appends to `<target>/.middleton/<agent>/<model>/<timestamp>/actions.log`:
+run timestamp, CLI options, target path, and every action middleton confirmed
+on your behalf (also logged at `info` level).
+
+If the target is a git repository and `.middleton/` is not listed in `.gitignore`,
+middleton warns at the end of a successful run (it does not fail).
+
+## Agent Specifics
+
+### OpenCode
+
+Middleton uses the **OpenCode Go** provider (`opencode-go`). Pass a catalog
+model id to `--model` (default `kimi-k2.5`).
+
+To list models available on that provider:
+
+```bash
+opencode models opencode-go
+```
+
+This displays the **OpenCode Go** provider's models — usually what you want.
+
+```bash
+opencode models
+```
+
+shows all models across every provider, but it's easy to change your billing by
+picking a different one.
 
 ## Output
 
-All artifacts are written to `<target>/.middleton/<agent>/`:
+All artifacts are written to `<target>/.middleton/<agent>/<model-slug>/<yyyymmdd-hhmm>/`:
 
 ```text
 .middleton/
 └── opencode/              # or claude/, codex/, etc.
-    ├── INTENT-SCAN-1.md    # Documentation-layer intent scan
-    ├── INTENT-SCAN-2.md    # Codebase or cross-document intent scan (profile-dependent)
-    ├── DEPTH.md            # Hollow vs. tangible substance analysis
-    ├── PROSECUTION.md      # Adversarial brief
-    ├── DEFENSE.md          # Charitable brief
-    ├── JUDGEMENT.md        # Middle-ground legitimacy verdict
-    ├── TRIAL.md            # Consolidated record (generated at end)
-    ├── TRIAL.pdf           # Consolidated PDF (unless --skip-pdf)
-    ├── TRIAL.epub          # Consolidated EPUB (unless --skip-epub)
-    ├── sessions.json       # Session IDs per phase
-    ├── INTENT-SCAN-1.pdf   # Styled PDF export (and matching PDFs for each .md)
-    ├── INTENT-SCAN-1.epub  # Styled EPUB export (and matching EPUBs for each .md)
-    └── ...
+    └── kimi-k2-5/           # slugified --model value
+        └── 20250602-1430/   # local run timestamp (no timezone suffix)
+            ├── INTENT-SCAN-1.md    # Documentation-layer intent scan
+            ├── INTENT-SCAN-2.md    # Codebase or cross-document intent scan
+            ├── DEPTH.md            # Hollow vs. tangible substance analysis
+            ├── PROSECUTION.md      # Adversarial brief (includes ## Pathos)
+            ├── DEFENSE.md          # Charitable brief
+            ├── JUDGEMENT.md        # Middle-ground legitimacy verdict
+            ├── TRIAL.md            # Consolidated record (generated at end)
+            ├── TRIAL.pdf           # Consolidated PDF (unless --skip-pdf)
+            ├── TRIAL.epub          # Consolidated EPUB (unless --skip-epub)
+            ├── sessions.json       # Session IDs per phase
+            ├── actions.log         # Append-only audit log
+            ├── context/
+            │   └── reviewer-note.md  # Private --note text (when provided)
+            └── ...
 ```
+
+Prior runs remain under `.middleton/` in sibling timestamp directories. Agents are
+instructed not to browse that tree; each run only reads its own phase artifacts.
+
+When `--note` is provided, the note is saved privately under `context/reviewer-note.md`
+and injected into prompts as confidential background. Agents must not quote or
+reference the note in public artifacts.
 
 After the pipeline completes, middleton writes **`TRIAL.md`** by merging the phase
 reports in this order: Judgement, Prosecution, Defense, Depth, then any other
@@ -342,8 +376,7 @@ horizontal-rule lines are rewritten so they are not parsed as YAML; legacy
 `* **A)**` quiz-style bullets are normalized to lettered lists; metadata (`title`,
 `author`, `lang`) is set via the pandoc CLI, not YAML front matter in the reports.
 
-The target repository itself is not modified beyond the `.middleton/<agent>/`
-directory.
+The target repository itself is not modified beyond the `.middleton/` tree.
 
 ## License
 
