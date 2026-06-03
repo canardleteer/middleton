@@ -276,7 +276,7 @@ middleton --export-epub /path/to/repo/.middleton/opencode/kimi-k2-5/20250602-143
 | `--skip-epub` | — | Skip pandoc EPUB export at the end |
 | `--export-pdf` | — | Export only markdown files in `DIR` that do not yet have a `.pdf` (skips the trial pipeline) |
 | `--export-epub` | — | Export only markdown files in `DIR` that do not yet have a `.epub` (skips the trial pipeline) |
-| `--note` | — | Additional context prepended to all analysis prompts |
+| `--note` | — | Private context hint prepended to all prompts (not citable as evidence) |
 | `--profile` | `repository` | Corpus lens: `repository` or `documents` |
 
 ### Plan vs build and agent backends
@@ -356,9 +356,11 @@ All artifacts are written to `<target>/.middleton/<agent>/<model-slug>/<yyyymmdd
 Prior runs remain under `.middleton/` in sibling timestamp directories. Agents are
 instructed not to browse that tree; each run only reads its own phase artifacts.
 
-When `--note` is provided, the note is saved privately under `context/reviewer-note.md`
-and injected into prompts as confidential background. Agents must not quote or
-reference the note in public artifacts.
+When `--note` is provided, the note is saved privately under
+`context/reviewer-note.md` and injected into prompts as a confidential **context
+hint** for all parties. It may steer what gets a second look, but must not overtake
+the review or dominate writeups — the corpus and prior phase artifacts stay primary.
+Public output must not cite the note itself or treat it as evidence.
 
 After the pipeline completes, middleton writes **`TRIAL.md`** by merging the phase
 reports in this order: Judgement, Prosecution, Defense, Depth, then any other
@@ -371,9 +373,10 @@ table of contents, syntax highlighting, and a styled header/footer.
 
 Unless `--skip-epub` is set, middleton runs **pandoc** on the same markdown files,
 writing matching `.epub` files (EPUB3) with the same structure and middleton
-branding. Export pre-processes agent markdown before pandoc: standalone `---`
-horizontal-rule lines are rewritten so they are not parsed as YAML; legacy
-`* **A)**` quiz-style bullets are normalized to lettered lists; metadata (`title`,
+branding. Export pre-processes agent markdown before pandoc: level-3+ headings are
+flattened for clean PDF tables of contents; legacy `* **A)**` quiz-style bullets
+are normalized to lettered lists; pandoc uses `markdown-raw_tex` so incidental
+`\citep`-style LaTeX in agent prose is literal, not executed; metadata (`title`,
 `author`, `lang`) is set via the pandoc CLI, not YAML front matter in the reports.
 
 The target repository itself is not modified beyond the `.middleton/` tree.

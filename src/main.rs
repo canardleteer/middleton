@@ -245,9 +245,11 @@ fn persist_reviewer_note(artifacts: &ArtifactPaths, note: Option<&str>) -> Resul
         .with_context(|| format!("create reviewer note directory {}", context_dir.display()))?;
     let note_path = context_dir.join("reviewer-note.md");
     let contents = format!(
-        "# Private reviewer context\n\n\
+        "# Private reviewer context (hint only)\n\n\
 This note was supplied by the person requesting the analysis. It is not part of the \
-public trial record.\n\n\
+public trial record and must not be cited as evidence. Agents may use it as one context \
+hint among many — it must not overtake investigation or dominate writeups. Factual \
+claims in phase output must still come from the corpus and prior artifacts.\n\n\
 {note}\n"
     );
     std::fs::write(&note_path, contents)
