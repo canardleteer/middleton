@@ -85,8 +85,7 @@ fn append_file_section(body: &mut String, dir: &Path, filename: &str) -> Result<
         .map(format_report_title)
         .unwrap_or_else(|| filename.to_string());
 
-    body.push_str("\n\n---\n\n");
-    body.push_str(&format!("# {title}\n\n{content}\n"));
+    body.push_str(&format!("\n\n# {title}\n\n{content}\n"));
     Ok(true)
 }
 

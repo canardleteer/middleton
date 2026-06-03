@@ -33,6 +33,8 @@ full development tree layouts) in artifacts.\n\
 - Prefer corpus-relative references (`src/foo.rs`, `README.md`).\n\
 - When private reviewer context mentions a path like `/home/bob/dev/abs100`, refer only to \
 the **`abs100` repository** (or a similar short name), not the full path.\n\
+- If a private reviewer hint shaped what you looked for, do not let that angle dominate \
+the writeup — the corpus (and prior phase artifacts) remain primary.\n\
 - Avoid \"system this ran on\" specifics.\n\
 - Do not cite or infer from git housekeeping files (for example `.git/logs/...`) — they \
 record local clone/fetch activity on the review machine, not authored artifact content.\n\n"
@@ -704,24 +706,43 @@ artifact is, with concise reasoning.\n\n\
     )
 }
 
+fn reviewer_context_hint_block(note: &str) -> String {
+    format!(
+        "## Private reviewer context (hint only — not public evidence)\n\
+{note}\n\n\
+This is confidential background shared with all parties (intent, depth, prosecution, \
+defense, and judgement).\n\n\
+## How to use this hint\n\
+- Treat it as **one context hint among many** — not the main event and not a shiny \
+object that overtakes the rest of the work.\n\
+- The corpus (and, where applicable, prior phase artifacts) remain the **primary** \
+drivers of investigation and conclusions. The hint may suggest where to look first, \
+what to double-check, or why a concern might matter — including angles that only stand \
+out once you know why the review was requested.\n\
+- **Do not let the hint dominate** emphasis, narrative, or verdict. If the hint points \
+at a pattern, pursue it only in proportion to what the corpus and earlier artifacts \
+actually support. Prosecution, defense, and judgement all follow this balance.\n\n\
+## Hard limits for every public artifact you write\n\
+- Do not quote, paraphrase as attributed reviewer input, or cite this note (or \
+`context/reviewer-note.md`) as a source.\n\
+- Do not present anything from this block as established fact by itself — it is not \
+evidence inside the repository.\n\
+- Do not mention that a private note exists, or that private context was injected into \
+the prompt.\n\
+- Ground every factual claim in the corpus, prior phase artifacts, or (when allowed) \
+labeled external context — not in the note alone.\n\n"
+    )
+}
+
 pub fn with_note(prompt: &str, note: Option<&str>) -> String {
     let Some(note) = note.map(str::trim).filter(|note| !note.is_empty()) else {
         return prompt.to_string();
     };
 
     format!(
-        "## Private reviewer context\n\
-{note}\n\n\
-Treat this as confidential background shared with all parties for interpretation. It may \
-explain provenance, circumstances, or intent surrounding the artifact under review. Use it \
-to inform analysis, but:\n\
-- Do not quote, paraphrase as attributed reviewer input, or reference this note directly in \
-any public artifact.\n\
-- Do not mention that a private note exists, or that private context was injected into \
-the prompt.\n\
-- Do not treat this note as evidence inside the repository.\n\n\
-## Analysis prompt\n\
-{prompt}"
+        "{hint}## Analysis prompt\n\
+{prompt}",
+        hint = reviewer_context_hint_block(note),
     )
 }
 
@@ -756,6 +777,11 @@ mod tests {
         let prompts = PhasePrompts::new(&test_paths(), ReviewProfile::Repository);
         let annotated = with_note(&prompts.depth_plan, Some("Submitted for a grant review."));
         assert!(annotated.starts_with("## Private reviewer context"));
+        assert!(annotated.contains("context hint"));
+        assert!(annotated.contains("shiny object"));
+        assert!(annotated.contains("overtake"));
+        assert!(annotated.contains("primary"));
+        assert!(annotated.contains("not evidence"));
         assert!(annotated.contains("Submitted for a grant review."));
         assert!(annotated.ends_with(&prompts.depth_plan));
     }
