@@ -1,6 +1,66 @@
 use crate::agent::ReviewProfile;
 use crate::paths::ArtifactPaths;
 
+#[derive(Debug, Clone, Copy)]
+enum ArtifactGuardMode {
+    IgnoreAll,
+    CurrentRunOnly,
+}
+
+fn artifact_storage_guard(base_display: &str, rel_prefix: &str, mode: ArtifactGuardMode) -> String {
+    let rule = match mode {
+        ArtifactGuardMode::IgnoreAll => format!(
+            "Do not list, grep, or read anything under `{base_display}/`. Prior Middleton runs \
+may exist there; they are not evidence."
+        ),
+        ArtifactGuardMode::CurrentRunOnly => format!(
+            "Do not list, grep, or read anything under `{base_display}/` except the exact \
+artifact paths named in this prompt for the current run (`{rel_prefix}/...`). Prior Middleton \
+runs may exist there; they are not evidence."
+        ),
+    };
+
+    format!(
+        "## Middleton artifact storage\n\
+{rule}\n\n"
+    )
+}
+
+fn path_privacy_guidance() -> &'static str {
+    "## Path privacy in writeups\n\
+- Never include absolute filesystem paths (home directories, `/Users/...`, `/home/...`, or \
+full development tree layouts) in artifacts.\n\
+- Prefer corpus-relative references (`src/foo.rs`, `README.md`).\n\
+- When private reviewer context mentions a path like `/home/bob/dev/abs100`, refer only to \
+the **`abs100` repository** (or a similar short name), not the full path.\n\
+- Avoid \"system this ran on\" specifics.\n\
+- Do not cite or infer from git housekeeping files (for example `.git/logs/...`) — they \
+record local clone/fetch activity on the review machine, not authored artifact content.\n\n"
+}
+
+fn git_corpus_exclusions() -> &'static str {
+    "Never read, grep, or cite paths under `.git/logs/`, `.git/refs/remotes/`, or other git \
+internal housekeeping files. They record local clone, fetch, and checkout activity on the \
+review machine — not content authored for the artifact under review — and often embed \
+analyst usernames, home directories, or host paths (for example \
+`.git/logs/refs/remotes/origin/HEAD`). Use read-only `git log`, `show`, `blame`, or \
+`diff` on commits when you need history; do not treat raw reflog files as corpus evidence."
+}
+
+fn trial_tone_calibration() -> &'static str {
+    "## Societal baseline (internalize, do not dedicate sections to these themes)\n\
+- AI-assisted authorship is not, by itself, a strike against legitimacy. Target concrete gaps \
+between claims and evidence, not the mere presence of generative tools.\n\
+- Early or informal sharing is a normal path toward formal, consensus-shaped work. Draft status \
+or incompleteness is not automatically bad faith.\n\
+- Solo authorship is how most work begins. Small teams or lone contributors are not inherently \
+suspicious.\n\
+- Institutional or corporate alignment may reflect legitimate employment or affiliation — or \
+performance/fraud. Treat as ambiguous until the corpus supports one reading.\n\
+These patterns are natural these days. Weigh them when choosing what to emphasize — not as \
+checklist items to call out explicitly.\n\n"
+}
+
 fn middleton_read_only(prefix: &str, profile: ReviewProfile) -> String {
     let corpus = match profile {
         ReviewProfile::Repository => "target repository",
@@ -19,7 +79,8 @@ analyze that separately from the ideas.\n"
     };
 
     format!(
-        "## Middleton read-only constraints\n\
+        "{path_privacy}\
+## Middleton read-only constraints\n\
 - READ ONLY for the {corpus}. Never compile, run, test, install, download, \
 or mutate anything outside `{prefix}/`.\n\
 - Use static evidence: files in the corpus, configs, docs, CI logs committed to the repo, \
@@ -29,33 +90,40 @@ is already documented in the corpus itself. Phrase inferential findings as infer
 {profile_note}\
 {investigation}\
 ",
+        path_privacy = path_privacy_guidance(),
         investigation = plan_investigation_aids(profile),
     )
 }
 
-fn plan_investigation_aids(profile: ReviewProfile) -> &'static str {
+fn plan_investigation_aids(profile: ReviewProfile) -> String {
     match profile {
         ReviewProfile::Repository => {
-            "\
+            format!(
+                "\
 ## Plan-phase investigation (optional)\n\
 During this plan step only, you may:\n\
+- When `.git` exists, treat tracked content as the primary corpus (`git ls-files` to scope \
+reads). Ignore untracked and unstaged files that look like process litter (editor temps, \
+build output, random single-use files) unless clearly part of the authored artifact. \
+{git_exclusions}\n\
 - Use read-only git commands (`log`, `show`, `blame`, `diff` without mutating flags) when \
 `.git` exists, to assess authorship cadence, churn, or doc/code divergence. Absence of git \
 is not a negative signal.\n\
 - Use the agent's guarded web search or fetch tools to corroborate external claims \
 (papers, standards, CVEs, product names, institutions). Label such findings as external \
 context, not in-corpus evidence.\n\
-- Prefer file-reading tools when they suffice. Do not install software or mutate the corpus.\n\n"
+- Prefer file-reading tools when they suffice. Do not install software or mutate the corpus.\n\n",
+                git_exclusions = git_corpus_exclusions(),
+            )
         }
-        ReviewProfile::Documents => {
-            "\
+        ReviewProfile::Documents => "\
 ## Plan-phase investigation (optional)\n\
 During this plan step only, you may use the agent's guarded web search or fetch tools to \
 corroborate external claims (papers, standards, product names, institutions). Label such \
 findings as external context, not in-corpus evidence.\n\
 Do not use shell, bash, or git commands — read the document files directly. Do not install \
 software or mutate the corpus.\n\n"
-        }
+            .to_string(),
     }
 }
 
@@ -109,17 +177,52 @@ impl PhasePrompts {
     pub fn new(paths: &ArtifactPaths, profile: ReviewProfile) -> Self {
         let p = PromptPaths::from_artifacts(paths);
         let ro = middleton_read_only(p.prefix, profile);
+        let ignore_all =
+            artifact_storage_guard(&paths.base_display, p.prefix, ArtifactGuardMode::IgnoreAll);
+        let current_run = artifact_storage_guard(
+            &paths.base_display,
+            p.prefix,
+            ArtifactGuardMode::CurrentRunOnly,
+        );
+        let trial_tone = trial_tone_calibration();
 
         Self {
-            intent_plan: intent_plan(&p, profile),
-            intent_build: intent_build(&p, profile),
-            depth_plan: format!("{}\n{}", depth_plan_body(&p, profile), ro),
-            depth_build: depth_build(&p, profile),
-            prosecution_plan: format!("{}\n{}", prosecution_plan_body(&p, profile), ro),
+            intent_plan: format!(
+                "{}{ignore_all}{path_privacy}",
+                intent_plan(&p, profile),
+                path_privacy = path_privacy_guidance(),
+            ),
+            intent_build: format!("{}{ignore_all}", intent_build(&p, profile)),
+            depth_plan: format!(
+                "{}\n{}{}",
+                depth_plan_body(&paths.base_display, profile),
+                ignore_all,
+                ro
+            ),
+            depth_build: format!("{}{ignore_all}", depth_build(&p, profile)),
+            prosecution_plan: format!(
+                "{}\n{}{}{trial_tone}{}",
+                prosecution_plan_body(&p, profile),
+                current_run,
+                trial_tone,
+                ro
+            ),
             prosecution_build: prosecution_build(&p),
-            defense_plan: format!("{}\n{}", defense_plan_body(&p, profile), ro),
+            defense_plan: format!(
+                "{}\n{}{}{trial_tone}{}",
+                defense_plan_body(&p, profile),
+                current_run,
+                trial_tone,
+                ro
+            ),
             defense_build: defense_build(&p),
-            judgement_plan: format!("{}\n{}", judgement_plan_body(&p, profile), ro),
+            judgement_plan: format!(
+                "{}\n{}{}{trial_tone}{}",
+                judgement_plan_body(&p, profile),
+                current_run,
+                trial_tone,
+                ro
+            ),
             judgement_build: judgement_build(&p, profile),
         }
     }
@@ -132,7 +235,11 @@ fn intent_plan(p: &PromptPaths<'_>, profile: ReviewProfile) -> String {
 ## Scope\n\
 1. Start with the primary documentation layer (`.md`, `.tex`, `.pdf` if present).\n\
 2. Then inspect the full codebase (source, tests, scripts, configs, manifests, \
-formal proofs).\n\n\
+formal proofs).\n\
+When `.git` exists, treat tracked content as the primary corpus (`git ls-files` to \
+scope reads). Ignore untracked and unstaged files that look like process litter \
+(editor temps, build output, random single-use files) unless clearly part of the \
+authored artifact. {git_exclusions}\n\n\
 Produce analysis for two separate scan reports:\n\
 - Documentation-layer sentiment and signals (for `{scan1}`)\n\
 - Full-codebase structural and implementation signals (for `{scan2}`)\n",
@@ -212,7 +319,8 @@ new software.
 {scan2_finish} Do not write files during this plan phase.",
         scope = scope
             .replace("{scan1}", &p.scan1)
-            .replace("{scan2}", &p.scan2),
+            .replace("{scan2}", &p.scan2)
+            .replace("{git_exclusions}", git_corpus_exclusions()),
         scan2_finish = scan2_desc,
         doc_slop = match profile {
             ReviewProfile::Documents =>
@@ -245,23 +353,27 @@ Both files are required. Do not stop until `{scan1}` and \
     )
 }
 
-fn depth_plan_body(_p: &PromptPaths<'_>, profile: ReviewProfile) -> String {
+fn depth_plan_body(base_display: &str, profile: ReviewProfile) -> String {
     let intro = match profile {
         ReviewProfile::Repository => {
-            "\
+            format!(
+                "\
 You are performing an independent deep technical analysis of the repository in \
 the current working directory. Your central question is how hollow versus tangible \
 this corpus is — where substance ends and presentation, scaffolding, or theater begins.\n\n\
-Do not read or depend on any files under `.middleton/`. Work from the repository itself.\n"
+Do not read or depend on any files under `{base_display}/`. Work from the repository itself.\n"
+            )
         }
         ReviewProfile::Documents => {
-            "\
+            format!(
+                "\
 You are performing an independent deep analysis of the document corpus in \
 the current working directory. Your central question is how hollow versus tangible \
 this specification or design pack is — where substance ends and presentation, \
 checklist theater, or narrative inflation begins.\n\n\
-Do not read or depend on any files under `.middleton/`. Work from the corpus itself. \
+Do not read or depend on any files under `{base_display}/`. Work from the corpus itself. \
 Missing source code is not a legitimacy penalty.\n"
+            )
         }
     };
 
@@ -395,8 +507,15 @@ prior analyses.
 2. Describe the overall \"mythos\" — the operating reality the author appears to inhabit \
 while producing this work. Name specific parties, institutions, or archetypes that \
 belong in that mythos where the evidence supports it.
-3. Derive the likely intent of publishing such work — what the author appears \
-to want readers, reviewers, or adopters to believe, feel, or do.
+3. In **`## Pathos`**, build an adversarial narrative centered on what readers, reviewers, \
+or adopters are being moved to *feel*, drawing on the psychological profile and mythos. \
+This section may be conjectural — use hedged language (\"may\", \"might\", \"suggests\") \
+where inference outruns proof. Every line must still trace to evidence in the prior \
+artifacts; do not invent scenes or motives with no anchor in the record. You were not \
+there at authoring time: do not write as an eyewitness or with false certainty about \
+private intent. Phrase pathos in measure proportionate to the evidence.
+4. In **`## Publishing intent`**, state what the author appears to want readers, reviewers, \
+or adopters to believe or do — distinct from the pathos narrative.
 
 Be adversarial but grounded in the prior artifacts. Do not write files during this \
 plan phase.",
@@ -410,9 +529,10 @@ plan phase.",
 fn prosecution_build(p: &PromptPaths<'_>) -> String {
     format!(
         "Write your complete prosecution brief to `{prosecution}` with exactly \
-these three sections:\n\n\
+these four sections:\n\n\
 ## Psychological profiling\n\
 ## Mythos\n\
+## Pathos\n\
 ## Publishing intent\n\n\
 {build}",
         prosecution = p.prosecution,
@@ -437,11 +557,6 @@ Do not re-read the entire corpus; cite specific files sparingly and only to supp
 charitable reinterpretations of points already surfaced."
         }
     };
-    let publish = match profile {
-        ReviewProfile::Repository => "publishing this repository",
-        ReviewProfile::Documents => "publishing this document pack",
-    };
-
     format!(
         "\
 You are the defense in a structured middleton trial. The {artifact} under review \
@@ -462,13 +577,11 @@ offer good-faith alternatives: honest limitations, legitimate engineering trade-
 draft-in-progress candor, domain norms, or benign rhetorical habits. Push back on \
 negative connotations that are inferential rather than established.
 
-Your defense should mirror the prosecution structure but reframe each topic charitably:
-1. Psychological profiling — generous readings of the author's motives, competence, \
-and sincerity where the evidence allows more than one interpretation.
-2. Mythos — a sympathetic account of the operating reality and named parties, \
-emphasizing constructive roles rather than suspicion.
-3. Publishing intent — plausible benign or pro-social reasons for {publish}, \
-without dismissing serious concerns outright.
+Respond naturally to the prosecution brief — not as a rigid checklist mirror, but with \
+equal weight across all four sections. Match the prosecution's accusational tone and \
+seriousness section by section, calibrated to the facts established in the prior \
+artifacts: where the prosecution is sharp, answer with commensurate substance; where it \
+overreaches, rebut without blanket dismissal.
 
 Be substantive, not merely contrarian. Do not write files during this plan phase.",
         scan1 = p.scan1,
@@ -482,9 +595,10 @@ Be substantive, not merely contrarian. Do not write files during this plan phase
 fn defense_build(p: &PromptPaths<'_>) -> String {
     format!(
         "Write your complete defense brief to `{defense}` with exactly \
-these three sections, responding to `{prosecution}` and the earlier analyses:\n\n\
+these four sections, responding to `{prosecution}` and the earlier analyses:\n\n\
 ## Psychological profiling\n\
 ## Mythos\n\
+## Pathos\n\
 ## Publishing intent\n\n\
 {build}",
         defense = p.defense,
@@ -596,14 +710,17 @@ pub fn with_note(prompt: &str, note: Option<&str>) -> String {
     };
 
     format!(
-        "## Additional context from the reviewer\n\
-> {note}\n\n \
-\
-Treat this as background supplied by the person requesting the analysis. It may explain \
-provenance, circumstances, or intent surrounding the artifact under review. Use it to \
-inform interpretation, but do not treat it as evidence inside the repository\n\n \
-\
-## Analysis prompt
+        "## Private reviewer context\n\
+{note}\n\n\
+Treat this as confidential background shared with all parties for interpretation. It may \
+explain provenance, circumstances, or intent surrounding the artifact under review. Use it \
+to inform analysis, but:\n\
+- Do not quote, paraphrase as attributed reviewer input, or reference this note directly in \
+any public artifact.\n\
+- Do not mention that a private note exists, or that private context was injected into \
+the prompt.\n\
+- Do not treat this note as evidence inside the repository.\n\n\
+## Analysis prompt\n\
 {prompt}"
     )
 }
@@ -616,7 +733,12 @@ mod tests {
     use crate::agent::AgentKind;
 
     fn test_paths() -> ArtifactPaths {
-        ArtifactPaths::new(Path::new("/repo"), AgentKind::OpenCode)
+        ArtifactPaths::with_timestamp(
+            Path::new("/repo"),
+            AgentKind::OpenCode,
+            "kimi-k2.5",
+            "20250602-1430",
+        )
     }
 
     #[test]
@@ -633,25 +755,34 @@ mod tests {
     fn with_note_prepends_context_block() {
         let prompts = PhasePrompts::new(&test_paths(), ReviewProfile::Repository);
         let annotated = with_note(&prompts.depth_plan, Some("Submitted for a grant review."));
-        assert!(annotated.starts_with("## Additional context from the reviewer"));
+        assert!(annotated.starts_with("## Private reviewer context"));
         assert!(annotated.contains("Submitted for a grant review."));
         assert!(annotated.ends_with(&prompts.depth_plan));
     }
 
     #[test]
     fn prompts_use_agent_scoped_paths() {
-        let paths = ArtifactPaths::new(Path::new("/repo"), AgentKind::Codex);
+        let paths = ArtifactPaths::with_timestamp(
+            Path::new("/repo"),
+            AgentKind::Codex,
+            "gpt-5",
+            "20250602-1200",
+        );
         let prompts = PhasePrompts::new(&paths, ReviewProfile::Repository);
         assert!(
             prompts
                 .intent_build
-                .contains(".middleton/codex/INTENT-SCAN-1.md")
+                .contains(".middleton/codex/gpt-5/20250602-1200/INTENT-SCAN-1.md")
         );
         assert!(
             prompts
                 .prosecution_plan
-                .contains(".middleton/codex/DEPTH.md")
+                .contains(".middleton/codex/gpt-5/20250602-1200/DEPTH.md")
         );
+        assert!(prompts.prosecution_build.contains("## Pathos"));
+        assert!(prompts.defense_build.contains("## Pathos"));
+        assert!(prompts.prosecution_plan.contains("Societal baseline"));
+        assert!(prompts.intent_plan.contains("Middleton artifact storage"));
     }
 
     #[test]
@@ -681,6 +812,8 @@ mod tests {
         let prompts = PhasePrompts::new(&test_paths(), ReviewProfile::Repository);
         assert!(prompts.depth_plan.contains("read-only git"));
         assert!(prompts.depth_plan.contains("web search"));
+        assert!(prompts.intent_plan.contains(".git/logs/"));
+        assert!(prompts.depth_plan.contains("refs/remotes/origin/HEAD"));
     }
 
     #[test]

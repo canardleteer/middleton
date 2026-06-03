@@ -1,10 +1,8 @@
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::agent::AgentKind;
 use crate::paths::ArtifactPaths;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -14,8 +12,8 @@ pub struct SessionManifest {
 }
 
 impl SessionManifest {
-    pub fn load_or_default(target: &Path, agent: AgentKind) -> Result<Self> {
-        let path = manifest_path(target, agent);
+    pub fn load_or_default(artifacts: &ArtifactPaths) -> Result<Self> {
+        let path = artifacts.join("sessions.json");
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -29,13 +27,12 @@ impl SessionManifest {
         self.phases.insert(phase.to_string(), session_id);
     }
 
-    pub fn save(&self, target: &Path, agent: AgentKind) -> Result<()> {
-        let path = manifest_path(target, agent);
+    pub fn save(&self, artifacts: &ArtifactPaths) -> Result<()> {
+        artifacts
+            .ensure_dir()
+            .with_context(|| format!("create artifact directory {}", artifacts.dir.display()))?;
+        let path = artifacts.join("sessions.json");
         let contents = serde_json::to_string_pretty(self).context("serialize session manifest")?;
         std::fs::write(&path, contents).with_context(|| format!("write {}", path.display()))
     }
-}
-
-fn manifest_path(target: &Path, agent: AgentKind) -> std::path::PathBuf {
-    ArtifactPaths::new(target, agent).join("sessions.json")
 }

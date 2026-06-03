@@ -44,6 +44,7 @@ struct TurnRequest<'a> {
     sandbox_policy: SandboxPolicy,
     phase: &'a str,
     label: &'a str,
+    write_prefix: &'a str,
     run_log: Arc<RunLog>,
 }
 
@@ -98,6 +99,7 @@ pub async fn run_plan_build_phase(
     model: Option<&str>,
     profile: ReviewProfile,
     target: &Path,
+    write_prefix: &str,
     expected_outputs: &[&Path],
     run_log: Arc<RunLog>,
 ) -> Result<String> {
@@ -126,6 +128,7 @@ pub async fn run_plan_build_phase(
         sandbox_policy: sandbox_for_plan(),
         phase,
         label: "plan",
+        write_prefix,
         run_log: Arc::clone(&run_log),
     })
     .await?;
@@ -143,6 +146,7 @@ pub async fn run_plan_build_phase(
         sandbox_policy: sandbox_for_build(middleton_dir)?,
         phase,
         label: "build",
+        write_prefix,
         run_log: Arc::clone(&run_log),
     })
     .await?;
@@ -153,6 +157,7 @@ pub async fn run_plan_build_phase(
         model,
         profile,
         &cwd,
+        write_prefix,
         middleton_dir,
         phase,
         expected_outputs,
@@ -177,6 +182,7 @@ async fn ensure_build_outputs(
     model: Option<&str>,
     profile: ReviewProfile,
     cwd: &str,
+    write_prefix: &str,
     middleton_dir: &Path,
     phase: &str,
     expected_outputs: &[&Path],
@@ -210,6 +216,7 @@ async fn ensure_build_outputs(
             sandbox_policy: sandbox_for_build(middleton_dir)?,
             phase,
             label: "build",
+            write_prefix,
             run_log: Arc::clone(&run_log),
         })
         .await
@@ -231,6 +238,7 @@ async fn run_turn(req: TurnRequest<'_>) -> Result<()> {
         sandbox_policy,
         phase,
         label,
+        write_prefix,
         run_log,
     } = req;
 
@@ -255,7 +263,7 @@ async fn run_turn(req: TurnRequest<'_>) -> Result<()> {
         .await
         .with_context(|| format!("start codex-codes {label} turn for {phase}"))?;
 
-    drain_turn(client, profile, step, phase, label, &run_log).await
+    drain_turn(client, profile, step, phase, label, write_prefix, &run_log).await
 }
 
 async fn drain_turn(
@@ -264,6 +272,7 @@ async fn drain_turn(
     step: TurnStep,
     phase: &str,
     label: &str,
+    write_prefix: &str,
     run_log: &RunLog,
 ) -> Result<()> {
     loop {
@@ -285,7 +294,17 @@ async fn drain_turn(
                 }
             }
             ServerMessage::Request { id, request } => {
-                respond_to_request(client, id, request, profile, step, phase, run_log).await?;
+                respond_to_request(
+                    client,
+                    id,
+                    request,
+                    profile,
+                    step,
+                    phase,
+                    write_prefix,
+                    run_log,
+                )
+                .await?;
             }
         }
     }
@@ -314,6 +333,7 @@ async fn respond_to_request(
     profile: ReviewProfile,
     step: TurnStep,
     phase: &str,
+    write_prefix: &str,
     run_log: &RunLog,
 ) -> Result<()> {
     let method = request.method().to_string();
@@ -346,7 +366,7 @@ async fn respond_to_request(
                 .context("respond to exec command approval")?;
         }
         ServerRequest::FileChangeApproval(params) => {
-            let decision = file_change_decision(&params, step);
+            let decision = file_change_decision(&params, step, write_prefix);
             if decision == FileChangeApprovalDecision::Accept {
                 let root = params.grant_root.as_deref().unwrap_or("unknown");
                 log_codex_confirmed(run_log, phase, step, &method, format!("grant_root={root}"))?;
@@ -357,7 +377,7 @@ async fn respond_to_request(
                 .context("respond to file change approval")?;
         }
         ServerRequest::ApplyPatchApproval(params) => {
-            let decision = apply_patch_decision(&params, step);
+            let decision = apply_patch_decision(&params, step, write_prefix);
             if decision == ReviewDecision::Approved {
                 let root = params.grant_root.as_deref().unwrap_or("unknown");
                 log_codex_confirmed(
@@ -528,10 +548,11 @@ fn exec_command_decision(profile: ReviewProfile, step: TurnStep) -> ReviewDecisi
 fn apply_patch_decision(
     params: &codex_codes::ApplyPatchApprovalParams,
     step: TurnStep,
+    write_prefix: &str,
 ) -> ReviewDecision {
     match step {
         TurnStep::Plan => ReviewDecision::Denied,
-        TurnStep::Build if grant_root_is_middleton(params.grant_root.as_deref()) => {
+        TurnStep::Build if grant_root_allows_write(params.grant_root.as_deref(), write_prefix) => {
             ReviewDecision::Approved
         }
         TurnStep::Build => ReviewDecision::Denied,
@@ -631,11 +652,12 @@ fn unknown_request_response(
 fn file_change_decision(
     params: &codex_codes::FileChangeRequestApprovalParams,
     step: TurnStep,
+    write_prefix: &str,
 ) -> FileChangeApprovalDecision {
     match step {
         TurnStep::Plan => FileChangeApprovalDecision::Decline,
         TurnStep::Build => {
-            if grant_root_is_middleton(params.grant_root.as_deref()) {
+            if grant_root_allows_write(params.grant_root.as_deref(), write_prefix) {
                 FileChangeApprovalDecision::Accept
             } else {
                 FileChangeApprovalDecision::Decline
@@ -644,8 +666,8 @@ fn file_change_decision(
     }
 }
 
-fn grant_root_is_middleton(grant_root: Option<&str>) -> bool {
-    grant_root.is_some_and(|root| root.contains(".middleton"))
+fn grant_root_allows_write(grant_root: Option<&str>, write_prefix: &str) -> bool {
+    grant_root.is_some_and(|root| root.replace('\\', "/").contains(write_prefix))
 }
 
 fn empty_thread_params() -> Result<ThreadStartParams> {

@@ -34,6 +34,7 @@ struct StepRequest<'a> {
     claude_bin: &'a str,
     prompt: &'a str,
     target: &'a Path,
+    write_prefix: &'a str,
     model: &'a str,
     profile: ReviewProfile,
     permission_mode: PermissionMode,
@@ -81,6 +82,7 @@ pub async fn run_plan_build_phase(
     model: &str,
     profile: ReviewProfile,
     target: &Path,
+    write_prefix: &str,
     expected_outputs: &[&Path],
     run_log: Arc<RunLog>,
 ) -> Result<String> {
@@ -89,6 +91,7 @@ pub async fn run_plan_build_phase(
         claude_bin: &runtime.claude_bin,
         prompt: plan_prompt,
         target,
+        write_prefix,
         model,
         profile,
         permission_mode: PermissionMode::Plan,
@@ -109,6 +112,7 @@ pub async fn run_plan_build_phase(
         model,
         profile,
         target,
+        write_prefix,
         &session_id,
         expected_outputs,
         run_log,
@@ -133,6 +137,7 @@ async fn ensure_build_outputs(
     model: &str,
     profile: ReviewProfile,
     target: &Path,
+    write_prefix: &str,
     session_id: &str,
     expected_outputs: &[&Path],
     run_log: Arc<RunLog>,
@@ -145,6 +150,7 @@ async fn ensure_build_outputs(
             claude_bin,
             prompt: &prompt,
             target,
+            write_prefix,
             model,
             profile,
             permission_mode: PermissionMode::AcceptEdits,
@@ -181,6 +187,7 @@ async fn run_step(req: StepRequest<'_>) -> Result<(String, Vec<ClaudeOutput>)> {
         claude_bin,
         prompt,
         target,
+        write_prefix,
         model,
         profile,
         permission_mode,
@@ -215,10 +222,17 @@ async fn run_step(req: StepRequest<'_>) -> Result<(String, Vec<ClaudeOutput>)> {
     let mut client = AsyncClient::new(child)
         .with_context(|| format!("create claude {step:?} client for {phase}"))?;
 
-    let responses =
-        query_with_control_handling(&mut client, prompt, profile, step, phase, target, &run_log)
-            .await
-            .with_context(|| format!("run claude {step:?} query for {phase}"))?;
+    let responses = query_with_control_handling(
+        &mut client,
+        prompt,
+        profile,
+        step,
+        phase,
+        write_prefix,
+        &run_log,
+    )
+    .await
+    .with_context(|| format!("run claude {step:?} query for {phase}"))?;
 
     if let Some(err) = responses.iter().find_map(|o| o.as_anthropic_error()) {
         bail!(
@@ -270,7 +284,7 @@ async fn query_with_control_handling(
     profile: ReviewProfile,
     step: StepKind,
     phase: &str,
-    target: &Path,
+    write_prefix: &str,
     run_log: &RunLog,
 ) -> Result<Vec<ClaudeOutput>> {
     client
@@ -302,7 +316,7 @@ async fn query_with_control_handling(
                         profile,
                         step,
                         phase,
-                        target,
+                        write_prefix,
                         run_log,
                     )?;
                     client
@@ -476,7 +490,7 @@ fn permission_response(
     profile: ReviewProfile,
     step: StepKind,
     phase: &str,
-    target: &Path,
+    write_prefix: &str,
     run_log: &RunLog,
 ) -> Result<ControlResponse> {
     if perm.tool_name == "AskUserQuestion" {
@@ -527,13 +541,13 @@ fn permission_response(
                 log_claude_tool_confirmed(run_log, phase, step, perm)?;
                 return Ok(perm.allow(request_id));
             }
-            if is_write_tool(&perm.tool_name) && writes_middleton_only(perm, target) {
+            if is_write_tool(&perm.tool_name) && writes_artifact_dir_only(perm, write_prefix) {
                 log_claude_tool_confirmed(run_log, phase, step, perm)?;
                 return Ok(perm.allow(request_id));
             }
             if is_write_tool(&perm.tool_name) {
                 return Ok(perm.deny(
-                    "middleton only allows writes under .middleton/ during build",
+                    "middleton only allows writes under the current run artifact directory during build",
                     request_id,
                 ));
             }
@@ -620,13 +634,10 @@ fn is_write_tool(tool: &str) -> bool {
     matches!(tool, "Write" | "Edit" | "NotebookEdit" | "MultiEdit")
 }
 
-fn writes_middleton_only(perm: &ToolPermissionRequest, target: &Path) -> bool {
-    let middleton = target.join(".middleton");
-    let middleton_prefix = middleton.to_string_lossy();
-
+fn writes_artifact_dir_only(perm: &ToolPermissionRequest, write_prefix: &str) -> bool {
     tool_paths(perm)
         .iter()
-        .any(|path| path.contains(".middleton/") || path.contains(&*middleton_prefix))
+        .any(|path| crate::paths::allows_write_path(path, write_prefix, Path::new("")))
 }
 
 fn tool_paths(perm: &ToolPermissionRequest) -> Vec<String> {
@@ -658,11 +669,21 @@ mod tests {
     use crate::paths::ArtifactPaths;
     use serde_json::json;
 
+    const TEST_WRITE_PREFIX: &str = ".middleton/opencode/kimi-k2-5/20250602-1430";
+
     fn test_run_log() -> Arc<RunLog> {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("repo");
         std::fs::create_dir_all(&target).unwrap();
-        Arc::new(RunLog::open(&ArtifactPaths::new(&target, AgentKind::OpenCode)).unwrap())
+        Arc::new(
+            RunLog::open(&ArtifactPaths::with_timestamp(
+                &target,
+                AgentKind::OpenCode,
+                "kimi-k2.5",
+                "20250602-1430",
+            ))
+            .unwrap(),
+        )
     }
 
     fn permission_decision_label(response: &ControlResponse) -> &'static str {
@@ -711,7 +732,7 @@ mod tests {
             ReviewProfile::Repository,
             StepKind::Plan,
             "test",
-            Path::new("/repo"),
+            TEST_WRITE_PREFIX,
             &log,
         )
         .unwrap();
@@ -722,7 +743,7 @@ mod tests {
     fn plan_step_denies_write() {
         let perm = ToolPermissionRequest {
             tool_name: "Write".to_string(),
-            input: json!({"file_path": "/repo/.middleton/DEPTH.md"}),
+            input: json!({"file_path": "/repo/.middleton/opencode/kimi-k2-5/20250602-1430/DEPTH.md"}),
             permission_suggestions: vec![],
             blocked_path: None,
             decision_reason: None,
@@ -735,7 +756,7 @@ mod tests {
             ReviewProfile::Repository,
             StepKind::Plan,
             "test",
-            Path::new("/repo"),
+            TEST_WRITE_PREFIX,
             &log,
         )
         .unwrap();
@@ -775,7 +796,7 @@ mod tests {
             ReviewProfile::Repository,
             StepKind::Plan,
             "test",
-            Path::new("/repo"),
+            TEST_WRITE_PREFIX,
             &log,
         )
         .unwrap();
@@ -799,7 +820,7 @@ mod tests {
             ReviewProfile::Documents,
             StepKind::Plan,
             "test",
-            Path::new("/repo"),
+            TEST_WRITE_PREFIX,
             &log,
         )
         .unwrap();
@@ -823,7 +844,7 @@ mod tests {
             ReviewProfile::Repository,
             StepKind::Build,
             "test",
-            Path::new("/repo"),
+            TEST_WRITE_PREFIX,
             &log,
         )
         .unwrap();
@@ -834,7 +855,7 @@ mod tests {
     fn build_step_allows_middleton_write() {
         let perm = ToolPermissionRequest {
             tool_name: "Write".to_string(),
-            input: json!({"file_path": "/repo/.middleton/opencode/DEPTH.md"}),
+            input: json!({"file_path": "/repo/.middleton/opencode/kimi-k2-5/20250602-1430/DEPTH.md"}),
             permission_suggestions: vec![],
             blocked_path: None,
             decision_reason: None,
@@ -847,7 +868,7 @@ mod tests {
             ReviewProfile::Repository,
             StepKind::Build,
             "test",
-            Path::new("/repo"),
+            TEST_WRITE_PREFIX,
             &log,
         )
         .unwrap();
