@@ -324,17 +324,14 @@ async fn query_with_control_handling(
                         .await
                         .context("send claude control response")?;
                 }
-                ControlRequestPayload::HookCallback(_) | ControlRequestPayload::McpMessage(_) => {
+                ControlRequestPayload::HookCallback(_)
+                | ControlRequestPayload::McpMessage(_)
+                | ControlRequestPayload::Initialize(_)
+                | ControlRequestPayload::Interrupt => {
                     client
                         .send_control_response(ControlResponse::success_empty(&req.request_id))
                         .await
-                        .context("ack claude hook/mcp control request")?;
-                }
-                ControlRequestPayload::Initialize(_) => {
-                    client
-                        .send_control_response(ControlResponse::success_empty(&req.request_id))
-                        .await
-                        .context("ack claude initialize control request")?;
+                        .context("ack claude control request")?;
                 }
             }
             continue;
