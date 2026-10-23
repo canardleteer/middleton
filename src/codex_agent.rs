@@ -11,8 +11,9 @@ use codex_codes::{
     DynamicToolCallResponse, ExecCommandApprovalResponse, FileChangeApprovalDecision,
     FileChangeRequestApprovalResponse, GrantedPermissionProfile, McpServerElicitationAction,
     McpServerElicitationRequestResponse, Notification, PermissionsRequestApprovalResponse,
-    SandboxPolicy, ServerMessage, ServerRequest, ThreadStartParams, ToolRequestUserInputAnswer,
-    ToolRequestUserInputResponse, TurnStartParams, TurnStatus, UserInput,
+    ReasoningEffort, SandboxPolicy, ServerMessage, ServerRequest, ThreadStartParams,
+    ToolRequestUserInputAnswer, ToolRequestUserInputResponse, TurnStartParams, TurnStatus,
+    UserInput,
 };
 use tokio::sync::Mutex;
 use tracing::{info, warn};
@@ -38,6 +39,7 @@ struct TurnRequest<'a> {
     thread_id: &'a str,
     prompt: &'a str,
     model: Option<&'a str>,
+    effort: Option<ReasoningEffort>,
     cwd: &'a str,
     profile: ReviewProfile,
     step: TurnStep,
@@ -50,9 +52,14 @@ struct TurnRequest<'a> {
 
 pub struct CodexRuntime {
     client: Arc<Mutex<AsyncClient>>,
+    reasoning_effort: Option<ReasoningEffort>,
 }
 
-pub async fn start_runtime(codex_bin: &str, target: &Path) -> Result<CodexRuntime> {
+pub async fn start_runtime(
+    codex_bin: &str,
+    target: &Path,
+    reasoning_effort: Option<&str>,
+) -> Result<CodexRuntime> {
     let builder = AppServerBuilder::new()
         .command(codex_bin)
         .working_directory(target);
@@ -61,6 +68,7 @@ pub async fn start_runtime(codex_bin: &str, target: &Path) -> Result<CodexRuntim
         .context("start codex app-server")?;
     Ok(CodexRuntime {
         client: Arc::new(Mutex::new(client)),
+        reasoning_effort: reasoning_effort.map(|effort| ReasoningEffort(effort.to_string())),
     })
 }
 
@@ -122,6 +130,7 @@ pub async fn run_plan_build_phase(
         thread_id: &thread_id,
         prompt: plan_prompt,
         model,
+        effort: runtime.reasoning_effort.clone(),
         cwd: &cwd,
         profile,
         step: TurnStep::Plan,
@@ -140,6 +149,7 @@ pub async fn run_plan_build_phase(
         thread_id: &thread_id,
         prompt: build_prompt,
         model,
+        effort: runtime.reasoning_effort.clone(),
         cwd: &cwd,
         profile,
         step: TurnStep::Build,
@@ -152,9 +162,10 @@ pub async fn run_plan_build_phase(
     .await?;
 
     ensure_build_outputs(
-        &runtime.client,
+        &mut client,
         &thread_id,
         model,
+        runtime.reasoning_effort.as_ref(),
         profile,
         &cwd,
         write_prefix,
@@ -177,9 +188,10 @@ pub async fn run_plan_build_phase(
 
 #[allow(clippy::too_many_arguments)]
 async fn ensure_build_outputs(
-    client: &Arc<Mutex<AsyncClient>>,
+    client: &mut AsyncClient,
     thread_id: &str,
     model: Option<&str>,
+    effort: Option<&ReasoningEffort>,
     profile: ReviewProfile,
     cwd: &str,
     write_prefix: &str,
@@ -204,12 +216,12 @@ async fn ensure_build_outputs(
         }
 
         let prompt = nudge_prompt(&missing);
-        let mut guard = client.lock().await;
         run_turn(TurnRequest {
-            client: &mut guard,
+            client,
             thread_id,
             prompt: &prompt,
             model,
+            effort: effort.cloned(),
             cwd,
             profile,
             step: TurnStep::Build,
@@ -232,6 +244,7 @@ async fn run_turn(req: TurnRequest<'_>) -> Result<()> {
         thread_id,
         prompt,
         model,
+        effort,
         cwd,
         profile,
         step,
@@ -251,14 +264,21 @@ async fn run_turn(req: TurnRequest<'_>) -> Result<()> {
             }],
             approval_policy: Some(AskForApproval::OnRequest),
             approvals_reviewer: None,
+            client_user_message_id: None,
             cwd: Some(cwd.to_string()),
-            effort: None,
+            disabled_plugin_ids: None,
+            effort,
             model: model.map(str::to_string),
             output_schema: None,
+            parent_turn_id: None,
             personality: None,
+            root_turn_id: None,
             sandbox_policy: Some(sandbox_policy),
             service_tier: None,
+            service_tier_for_turn: None,
             summary: None,
+            tool_output: None,
+            turn_trigger: None,
         })
         .await
         .with_context(|| format!("start codex-codes {label} turn for {phase}"))?;
@@ -317,10 +337,12 @@ fn turn_error(notification: &Notification) -> Option<String> {
             if let Some(error) = &event.turn.error {
                 return Some(error.message.clone());
             }
-            if event.turn.status == TurnStatus::Failed {
-                return Some("turn failed".to_string());
+            match event.turn.status {
+                TurnStatus::Completed => None,
+                TurnStatus::Interrupted => Some("turn interrupted".to_string()),
+                TurnStatus::Failed => Some("turn failed".to_string()),
+                TurnStatus::InProgress => Some("turn ended without completing".to_string()),
             }
-            None
         }
         _ => None,
     }
@@ -541,7 +563,9 @@ fn exec_command_decision(profile: ReviewProfile, step: TurnStep) -> ReviewDecisi
     if step == TurnStep::Plan && profile.plan_allows_command_execution() {
         ReviewDecision::Approved
     } else {
-        ReviewDecision::Denied
+        ReviewDecision::Denied {
+            rejection: "Command execution is not allowed in this review step.".to_string(),
+        }
     }
 }
 
@@ -551,11 +575,15 @@ fn apply_patch_decision(
     write_prefix: &str,
 ) -> ReviewDecision {
     match step {
-        TurnStep::Plan => ReviewDecision::Denied,
+        TurnStep::Plan => ReviewDecision::Denied {
+            rejection: "The plan step is read-only.".to_string(),
+        },
         TurnStep::Build if grant_root_allows_write(params.grant_root.as_deref(), write_prefix) => {
             ReviewDecision::Approved
         }
-        TurnStep::Build => ReviewDecision::Denied,
+        TurnStep::Build => ReviewDecision::Denied {
+            rejection: "Writes must stay inside the current run directory.".to_string(),
+        },
     }
 }
 
@@ -697,6 +725,101 @@ fn sandbox_for_build(middleton_dir: &Path) -> Result<SandboxPolicy> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn completion(status: &str) -> Notification {
+        Notification::TurnCompleted(
+            serde_json::from_value(serde_json::json!({
+                "threadId": "test-thread",
+                "turn": { "id": "test-turn", "status": status }
+            }))
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn only_completed_turns_succeed() {
+        assert_eq!(turn_error(&completion("completed")), None);
+        for status in ["interrupted", "failed", "inProgress"] {
+            assert!(turn_error(&completion(status)).is_some(), "{status}");
+        }
+    }
+
+    #[test]
+    fn completion_preserves_server_error() {
+        let notification = Notification::TurnCompleted(
+            serde_json::from_value(serde_json::json!({
+                "threadId": "test-thread",
+                "turn": {
+                    "id": "test-turn",
+                    "status": "failed",
+                    "error": { "message": "model unavailable" }
+                }
+            }))
+            .unwrap(),
+        );
+        assert_eq!(
+            turn_error(&notification).as_deref(),
+            Some("model unavailable")
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn retries_missing_report_without_relocking_client() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::Duration;
+
+        use crate::agent::AgentKind;
+        use crate::paths::ArtifactPaths;
+
+        let dir = tempfile::tempdir().unwrap();
+        let artifacts =
+            ArtifactPaths::with_timestamp(dir.path(), AgentKind::Codex, "test-model", "test-run");
+        let run_log = Arc::new(RunLog::open(&artifacts).unwrap());
+        let script = dir.path().join("fake-codex");
+        std::fs::write(
+            &script,
+            include_str!("../tests/fixtures/codex-app-server.sh"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let runtime = start_runtime(script.to_str().unwrap(), &artifacts.dir, Some("max"))
+            .await
+            .unwrap();
+        let report = artifacts.join("DEPTH.md");
+        // The first build omits its report. Allow the 30-second settle window
+        // and then require the nudge to complete, bounding a lock regression.
+        let result = tokio::time::timeout(
+            Duration::from_secs(45),
+            run_plan_build_phase(
+                &runtime,
+                "depth",
+                "plan",
+                "build",
+                None,
+                ReviewProfile::Repository,
+                &artifacts.dir,
+                &artifacts.rel_prefix,
+                &[report.as_path()],
+                run_log,
+            ),
+        )
+        .await;
+        stop_runtime(runtime).await.unwrap();
+
+        assert_eq!(result.expect("Codex retry hung").unwrap(), "test-thread");
+        assert_eq!(std::fs::read_to_string(report).unwrap(), "# Depth\n");
+        assert_eq!(
+            std::fs::read_to_string(artifacts.join("turn-count")).unwrap(),
+            "3\n"
+        );
+        let requests = std::fs::read_to_string(artifacts.join("turn-requests.jsonl")).unwrap();
+        for request in requests.lines() {
+            let request: serde_json::Value = serde_json::from_str(request).unwrap();
+            assert_eq!(request["params"]["effort"], "max");
+        }
+    }
 
     #[test]
     fn parse_model_passes_through_codex_ids() {

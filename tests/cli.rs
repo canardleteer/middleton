@@ -22,3 +22,16 @@ fn opencode_does_not_require_an_environment_api_key() {
     assert!(stderr.contains("start opencode serve"), "{stderr}");
     assert!(!stderr.contains("OPENCODE_API_KEY"), "{stderr}");
 }
+
+#[test]
+fn reasoning_effort_requires_codex() {
+    let output = Command::new(env!("CARGO_BIN_EXE_middleton"))
+        .args([".", "--agent", "opencode", "--reasoning-effort", "max"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("--reasoning-effort requires --agent codex")
+    );
+}

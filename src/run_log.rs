@@ -27,6 +27,7 @@ pub struct RunOptions {
     pub agent: AgentKind,
     pub profile: ReviewProfile,
     pub model: String,
+    pub reasoning_effort: Option<String>,
     pub hostname: String,
     pub opencode_bin: String,
     pub claude_bin: String,
@@ -79,6 +80,7 @@ input={input}\n\
 agent={agent}\n\
 profile={profile}\n\
 model={model}\n\
+reasoning_effort={reasoning_effort}\n\
 hostname={hostname}\n\
 opencode_bin={opencode_bin}\n\
 claude_bin={claude_bin}\n\
@@ -91,6 +93,10 @@ note_present={note_present}\n\
             agent = options.agent.label(),
             profile = options.profile.label(),
             model = options.model,
+            reasoning_effort = options
+                .reasoning_effort
+                .as_deref()
+                .unwrap_or("configured default"),
             hostname = options.hostname,
             opencode_bin = options.opencode_bin,
             claude_bin = options.claude_bin,
@@ -182,6 +188,7 @@ mod tests {
             agent: AgentKind::OpenCode,
             profile: ReviewProfile::Documents,
             model: "kimi".to_string(),
+            reasoning_effort: Some("max".to_string()),
             hostname: "127.0.0.1".to_string(),
             opencode_bin: "opencode".to_string(),
             claude_bin: "claude".to_string(),
@@ -203,6 +210,7 @@ mod tests {
         let contents = fs::read_to_string(log.path()).unwrap();
         assert!(contents.contains("RUN "));
         assert!(contents.contains("profile=documents"));
+        assert!(contents.contains("reasoning_effort=max"));
         assert!(contents.contains("CONFIRMED"));
         assert!(contents.contains("git log"));
     }

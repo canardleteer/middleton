@@ -21,7 +21,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 claude-codes = { version = "2.1", default-features = false, features = ["async-client"] }
 uuid = { version = "1", features = ["v4"] }
-codex-codes = { version = "0.129", default-features = false, features = ["async-client"] }
+codex-codes = { version = "0.163.6", default-features = false, features = ["async-client"] }
 regex = "1"
 
 [dev-dependencies]

@@ -73,6 +73,10 @@ struct Cli {
     #[arg(long, default_value = "kimi-k2.5")]
     model: String,
 
+    /// Codex reasoning effort (otherwise inherit Codex configuration)
+    #[arg(long, value_parser = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"])]
+    reasoning_effort: Option<String>,
+
     /// OpenCode server bind hostname
     #[arg(long, default_value = "127.0.0.1")]
     hostname: String,
@@ -123,6 +127,9 @@ enum AgentRuntime {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if cli.reasoning_effort.is_some() && cli.agent != AgentKind::Codex {
+        bail!("--reasoning-effort requires --agent codex");
+    }
     init_logging(&cli)?;
 
     if let Some(middleton_dir) = &cli.export_pdf {
@@ -274,7 +281,9 @@ async fn start_agent_runtime(target: &Path, cli: &Cli) -> Result<AgentRuntime> {
             Ok(AgentRuntime::ClaudeCode(runtime))
         }
         AgentKind::Codex => {
-            let runtime = codex_agent::start_runtime(&cli.codex, target).await?;
+            let runtime =
+                codex_agent::start_runtime(&cli.codex, target, cli.reasoning_effort.as_deref())
+                    .await?;
             info!(
                 provider_model = codex_model_label(codex_model(&cli.model).as_deref()),
                 "Codex app-server ready"
@@ -368,6 +377,7 @@ fn run_options_from_cli(cli: &Cli, target: &Path, input: &str) -> RunOptions {
         agent: cli.agent,
         profile: cli.profile,
         model: cli.model.clone(),
+        reasoning_effort: cli.reasoning_effort.clone(),
         hostname: cli.hostname.clone(),
         opencode_bin: cli.opencode.clone(),
         claude_bin: cli.claude.clone(),
@@ -583,6 +593,51 @@ mod tests {
     #[test]
     fn cli_builds() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn accepts_codex_backend_and_binary() {
+        let cli = Cli::try_parse_from([
+            "middleton",
+            ".",
+            "--agent",
+            "codex",
+            "--codex",
+            "/opt/bin/codex",
+            "--model",
+            "custom-model",
+            "--reasoning-effort",
+            "max",
+            "--skip-pdf",
+            "--skip-epub",
+        ])
+        .unwrap();
+        assert_eq!(cli.agent, AgentKind::Codex);
+        assert_eq!(cli.codex, "/opt/bin/codex");
+        assert_eq!(cli.model, "custom-model");
+        assert_eq!(cli.reasoning_effort.as_deref(), Some("max"));
+    }
+
+    #[test]
+    fn model_and_reasoning_defaults_remain_unchanged() {
+        let cli = Cli::try_parse_from(["middleton", "."]).unwrap();
+        assert_eq!(cli.model, "kimi-k2.5");
+        assert!(cli.reasoning_effort.is_none());
+    }
+
+    #[test]
+    fn rejects_unknown_reasoning_effort() {
+        assert!(
+            Cli::try_parse_from([
+                "middleton",
+                ".",
+                "--agent",
+                "codex",
+                "--reasoning-effort",
+                "maximum",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
