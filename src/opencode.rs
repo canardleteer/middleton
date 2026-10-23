@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use opencode_rs::Client;
 use opencode_rs::ClientBuilder;
 use opencode_rs::server::{ManagedServer, ServerOptions};
@@ -12,18 +12,8 @@ pub struct OpenCodeRuntime {
     pub client: Client,
 }
 
-pub fn ensure_opencode_go_api_key() -> Result<()> {
-    if std::env::var_os("OPENCODE_API_KEY").is_some_and(|value| !value.is_empty()) {
-        return Ok(());
-    }
-
-    bail!(
-        "OPENCODE_API_KEY is not set. Middleton requires an OpenCode Go API key \
-         (provider opencode-go, not OpenCode Zen opencode/...)."
-    );
-}
-
 pub fn opencode_go_model(model_id: &str) -> ModelRef {
+    let model_id = model_id.strip_prefix("opencode-go/").unwrap_or(model_id);
     ModelRef {
         provider_id: Some("opencode-go".to_string()),
         model_id: Some(model_id.to_string()),
@@ -45,8 +35,6 @@ pub async fn start_runtime(
     hostname: &str,
     opencode_bin: &str,
 ) -> Result<OpenCodeRuntime> {
-    ensure_opencode_go_api_key()?;
-
     let server = ManagedServer::start(
         ServerOptions::new()
             .directory(target)
@@ -71,4 +59,18 @@ pub fn build_client(base_url: &Url, target: &Path) -> Result<Client> {
 
 pub async fn stop_runtime(runtime: ManagedServer) -> Result<()> {
     runtime.stop().await.context("stop opencode serve")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_bare_and_provider_qualified_go_models() {
+        for model in ["minimax-m3.1-flash", "opencode-go/minimax-m3.1-flash"] {
+            let model = opencode_go_model(model);
+            assert_eq!(model.provider_id.as_deref(), Some("opencode-go"));
+            assert_eq!(model.model_id.as_deref(), Some("minimax-m3.1-flash"));
+        }
+    }
 }

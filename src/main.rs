@@ -34,8 +34,7 @@ use crate::codex_agent::{
 };
 use crate::manifest::SessionManifest;
 use crate::opencode::{
-    OpenCodeRuntime, ensure_opencode_go_api_key, model_ref_label, opencode_go_model, start_runtime,
-    stop_runtime,
+    OpenCodeRuntime, model_ref_label, opencode_go_model, start_runtime, stop_runtime,
 };
 use crate::paths::ArtifactPaths;
 use crate::prompts::{PhasePrompts, with_note};
@@ -137,10 +136,6 @@ async fn main() -> Result<()> {
     let input = cli.input.as_deref().context(
         "input path or git URL is required unless --export-pdf or --export-epub is used",
     )?;
-
-    if cli.agent == AgentKind::OpenCode {
-        ensure_opencode_go_api_key()?;
-    }
 
     let target = target::resolve_target(input, &cli.output)?;
     let artifacts = ArtifactPaths::new(&target, cli.agent, &cli.model);
