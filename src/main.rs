@@ -58,12 +58,12 @@ struct Cli {
 
     /// Export markdown files in a Middleton run directory to PDF, skipping files that
     /// already have a matching `.pdf`
-    #[arg(long, value_name = "DIR")]
+    #[arg(long, value_name = "DIR", conflicts_with_all = ["input", "export_epub"])]
     export_pdf: Option<PathBuf>,
 
     /// Export markdown files in a Middleton run directory to EPUB, skipping files that
     /// already have a matching `.epub`
-    #[arg(long, value_name = "DIR")]
+    #[arg(long, value_name = "DIR", conflicts_with = "input")]
     export_epub: Option<PathBuf>,
 
     /// Agent backend to run analysis phases
@@ -164,8 +164,8 @@ async fn main() -> Result<()> {
         "starting middleton"
     );
 
-    let runtime = start_agent_runtime(&target, &cli).await?;
     let mut manifest = SessionManifest::load_or_default(&artifacts)?;
+    let runtime = start_agent_runtime(&target, &cli).await?;
 
     let pipeline_result = run_pipeline(
         &runtime,
@@ -182,9 +182,12 @@ async fn main() -> Result<()> {
         let _ = manifest.save(&artifacts);
     }
 
-    stop_agent_runtime(runtime).await?;
-
+    let shutdown_result = stop_agent_runtime(runtime).await;
+    if let Err(error) = &shutdown_result {
+        tracing::warn!(%error, "agent runtime shutdown failed");
+    }
     pipeline_result?;
+    shutdown_result?;
 
     let trial_md = trial::compile(&artifacts.dir)?;
 
@@ -575,4 +578,42 @@ fn init_logging(cli: &Cli) -> Result<()> {
         .try_init();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::{CommandFactory, error::ErrorKind};
+
+    #[test]
+    fn cli_builds() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn export_does_not_require_input() {
+        for option in ["--export-pdf", "--export-epub"] {
+            assert!(Cli::try_parse_from(["middleton", option, "/tmp/run"]).is_ok());
+        }
+    }
+
+    #[test]
+    fn rejects_ambiguous_export_modes() {
+        for args in [
+            vec!["middleton", ".", "--export-pdf", "/tmp/run"],
+            vec!["middleton", ".", "--export-epub", "/tmp/run"],
+            vec![
+                "middleton",
+                "--export-pdf",
+                "/tmp/run",
+                "--export-epub",
+                "/tmp/run",
+            ],
+        ] {
+            assert_eq!(
+                Cli::try_parse_from(args).err().unwrap().kind(),
+                ErrorKind::ArgumentConflict
+            );
+        }
+    }
 }

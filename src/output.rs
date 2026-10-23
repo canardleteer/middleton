@@ -16,7 +16,7 @@ pub fn missing_outputs(expected_outputs: &[&Path]) -> Vec<PathBuf> {
 
 pub fn is_valid_output(path: &Path) -> bool {
     std::fs::metadata(path)
-        .map(|meta| meta.len() > 0)
+        .map(|meta| meta.is_file() && meta.len() > 0)
         .unwrap_or(false)
 }
 
@@ -123,5 +123,14 @@ mod tests {
         let prompt = nudge_prompt(&[PathBuf::from("/repo/.middleton/DEPTH.md")]);
         assert!(prompt.contains("DEPTH.md"));
         assert!(prompt.contains("still missing"));
+    }
+
+    #[test]
+    fn rejects_directory_as_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let report = dir.path().join("DEPTH.md");
+        fs::create_dir(&report).unwrap();
+        assert!(!is_valid_output(&report));
+        assert!(verify_outputs(&[&report], "depth").is_err());
     }
 }

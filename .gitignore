@@ -1,4 +1,5 @@
 /target
+/.middleton/
 .rumdl_cache
 
 # Local env files (API keys, etc.)
