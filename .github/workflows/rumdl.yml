@@ -1,21 +1,38 @@
 on:
+  push:
+    paths:
+      - "**/*.md"
+      - ".rumdl.toml"
+      - ".github/workflows/rumdl.yml"
   pull_request:
     paths:
-      - "README.md"
+      - "**/*.md"
+      - ".rumdl.toml"
+      - ".github/workflows/rumdl.yml"
+  workflow_dispatch:
 
 name: "Markdown Hygiene"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   rumdl:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: true
 
-      # https://rumdl.dev/usage/ci-cd/ — pin both the action tag (@v0.2.2) and
-      # `version` input; @v0 tracks the latest action release, not the rumdl binary.
-      - uses: rvben/rumdl@v0.2.2
+      # Pin the action and CLI independently; the action defaults to latest.
+      # https://github.com/rvben/rumdl#cicd-integration
+      - uses: rvben/rumdl@v0.2.62
         with:
+          version: "0.2.62"
           config: .rumdl.toml

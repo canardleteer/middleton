@@ -1,18 +1,42 @@
 on:
+  push:
+    paths:
+      - "Cargo.*"
+      - "src/**"
+      - "tests/**"
+      - "assets/**"
+      - "rust-toolchain.toml"
+      - "Dockerfile"
+      - ".github/workflows/rust-hygiene.yml"
   pull_request:
     paths:
       - "Cargo.*"
       - "src/**"
+      - "tests/**"
+      - "assets/**"
+      - "rust-toolchain.toml"
+      - "Dockerfile"
+      - ".github/workflows/rust-hygiene.yml"
+  workflow_dispatch:
 
 name: "Rust Hygiene"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   hygiene:
     strategy:
+      fail-fast: false
       matrix:
         platform: [macos-latest, ubuntu-latest]
 
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v6
@@ -21,19 +45,59 @@ jobs:
 
       - name: rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: Rust compiler version
+        id: rustc
+        run: echo "version=$(rustc --version)" >> "$GITHUB_OUTPUT"
 
       - name: Initialize Rust Cache
         uses: actions/cache@v5
         with:
           path: |
-            ~/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: cargo check
-        run: cargo check
-
-      - name: cargo fmt
-        run: cargo fmt --all -- --check
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.rustc.outputs.version }}-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
 
       - name: cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: cargo test
+        run: cargo test --locked --all-targets --all-features
+
+  docker-toolchain:
+    name: Docker Rust compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read Rust version from Dockerfile
+        id: docker-rust
+        shell: bash
+        run: |
+          version="$(sed -n 's/^ARG RUST_VERSION=//p' Dockerfile)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.docker-rust.outputs.version }}
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ steps.docker-rust.outputs.version }}-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: cargo check with Docker's Rust version
+        run: cargo check --locked --all-targets --all-features
