@@ -1,50 +1,47 @@
 # middleton
 
-> *"is this legit?" Analysis Workflow
+*"is this legit?" Analysis Workflow
 
-> [!NOTE]
-> The name `middleton`, comes from the excellent Judge Jeffery Middleton in St.
-> Joseph County Michigan, who streams his courtroom ocassionally. While not much
-> of a "theater" trial court (like this codebase puts on), a good show either way:
-> [Youtube Channel](https://www.youtube.com/channel/UCS8gM5S889oBPyN6K07ZC6A/streams)
+The name `middleton` comes from Judge Jeffery Middleton in St. Joseph County,
+Michigan, who occasionally streams his courtroom. This project borrows the
+trial format for reviewing repositories. Watch his
+[YouTube channel](https://www.youtube.com/channel/UCS8gM5S889oBPyN6K07ZC6A/streams).
 
 `middleton` is a Rust CLI that runs a structured, multi-phase review of a git
 repository or local directory. It uses [OpenCode](https://opencode.ai),
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code), or
 [Codex](https://github.com/openai/codex) agents to examine
-an artifact corpus — code, docs, proofs, CI, papers — and produce a trial-style
+source code alongside documentation and other project artifacts to produce a
+trial-style
 analysis: adversarial prosecution, charitable defense, and a middle-ground
 legitimacy verdict.
 
-The goal is not a conventional code review. Middleton asks
-whether a repository is **substantive or performative**: hollow scaffolding
-versus tangible engineering, stagecraft versus sincerity, claims backed by
-implementation versus narrative hype.
+Middleton examines whether a repository's claims are backed by working
+implementation. The review looks for tangible engineering and identifies
+unsupported claims or hollow scaffolding. It also considers how the project
+presents itself and what that presentation suggests about its purpose.
 
-> [!WARNING]
-> **Clanker generated code.**
+Clanker generated code.
 
-> [!IMPORTANT]
-> Published because people like seeing the results, and I want them to
-> burn their own tokens. Not really tested much. I would rather build
-> a custom agent for this, but wanted to hand off the process to folks.
->
-> Prompt editing is expected, depending on what you're looking at.
+Published because people like seeing the results and want to run the process
+with their own accounts. Live testing is limited. I would prefer a custom
+agent, but wanted others to be able to use this workflow. Edit the prompts to
+suit the material you are reviewing.
 
 ## Requirements
 
-> [!WARNING]
-> **Codex** and **Claude Code** support is questionable compared to **OpenCode**.
-> OpenCode is the default and best-tested backend.
+OpenCode is the default and best-tested backend. Codex and Claude Code have
+less live testing.
 
-- **Rust** toolchain (2024 edition; build with `cargo build --release`)
-- **One agent backend:**
-  - **OpenCode** (default): `opencode` on your `PATH` and **`OPENCODE_API_KEY`**
-    (OpenCode Go / `opencode-go`, not OpenCode Zen)
-  - **Claude**: `claude` on your `PATH` with authentication configured
-  - **Codex**: `codex` on your `PATH` with Codex authentication configured
-- **PDF export** (optional; `--skip-pdf` to skip): **pandoc** and **xelatex**
-  (falls back to **pdflatex**). Body text uses **DejaVu Sans** for broad symbol
+- Rust toolchain (2024 edition; build with `cargo build --release`)
+- One agent backend:
+  - OpenCode (default): `opencode` on your `PATH` with OpenCode Go
+    authentication configured through `opencode auth login`. Middleton uses
+    the CLI's saved credentials; `OPENCODE_API_KEY` is an optional alternative.
+  - Claude: `claude` on your `PATH` with authentication configured
+  - Codex: `codex` on your `PATH` with Codex authentication configured
+- PDF export (optional; `--skip-pdf` to skip): pandoc and xelatex
+  (falls back to pdflatex). Body text uses DejaVu Sans for broad symbol
   coverage in agent-generated prose. On Ubuntu:
 
   ```bash
@@ -53,8 +50,8 @@ implementation versus narrative hype.
   ```
 
   Debian: see [`Dockerfile`](Dockerfile) (`runtime-base` apt/CTAN setup).
-- **eBook export (EPUB3)** (optional; `--skip-epub` to skip): **pandoc** only (no
-  TeX). **`fonts-dejavu`** is recommended so embedded typography matches the
+- eBook export (EPUB3) (optional; `--skip-epub` to skip): pandoc only (no
+  TeX). `fonts-dejavu` is recommended so embedded typography matches the
   styled export. Independent of PDF — you can export EPUB without installing
   xelatex.
 
@@ -65,9 +62,9 @@ OpenCode, Claude Code, or Codex. Each phase uses a plan → build workflow: the
 agent plans its analysis, then writes structured markdown artifacts under
 `<target>/.middleton/<agent>/<model>/<timestamp>/` (for example
 `.middleton/opencode/kimi-k2-5/20250602-1430/`), so each run is isolated and
-outcomes from different agent backends stay separate. Analysis is **read-only**
+outcomes from different agent backends stay separate. Analysis is read-only
 for the target corpus: the agent may use read-only git history and guarded web
-search **during the plan step only** (when the backend supports it), then
+search during the plan step only (when the backend supports it), then
 transcribes findings during build. Middleton rejects installs, builds, tests, and
 target-corpus writes; build steps may only write under the current run directory.
 
@@ -112,8 +109,8 @@ Use `--profile` to choose the corpus lens (default `repository`):
 
 | Profile | Use when |
 |---------|----------|
-| `repository` | Git repos with code, CI, proofs, and docs — assess implementation vs claims |
-| `documents` | Specs, architecture packs, or design folders with little or no code — rigorous doc evaluation without penalizing missing source |
+| `repository` | Git repositories: assess implementation and supporting evidence against project claims |
+| `documents` | Specs or design documents with little source code: evaluate their content without a missing-code penalty |
 
 Both profiles run the same five phases and write the same artifact filenames.
 `INTENT-SCAN-2` means full-codebase signals in `repository` mode and
@@ -123,11 +120,11 @@ cross-document structure/coherence in `documents` mode.
 
 | Phase | Reads | Writes | Role |
 |-------|-------|--------|------|
-| **Intent** | Corpus (read-only; scope depends on profile) | `INTENT-SCAN-1.md`, `INTENT-SCAN-2.md` | Forensic scan for rhetorical intent, stagecraft, and performative signals |
-| **Depth** | Corpus (independent; ignores `.middleton/`) | `DEPTH.md` | Hollow vs. tangible substance (code/CI in `repository`; doc coherence in `documents`) |
-| **Prosecution** | Intent scans + depth | `PROSECUTION.md` | Adversarial brief: psychological profiling, mythos, publishing intent |
-| **Defense** | Intent scans + depth + prosecution | `DEFENSE.md` | Charitable rebuttal with the same structure as prosecution |
-| **Judgement** | All prior artifacts | `JUDGEMENT.md` | Middle-ground synthesis and a committed legitimacy verdict |
+| Intent | Corpus (read-only; scope depends on profile) | `INTENT-SCAN-1.md`, `INTENT-SCAN-2.md` | Examine rhetorical intent and how the project presents itself |
+| Depth | Corpus (independent; ignores `.middleton/`) | `DEPTH.md` | Hollow vs. tangible substance (code/CI in `repository`; doc coherence in `documents`) |
+| Prosecution | Intent scans + depth | `PROSECUTION.md` | Adversarial brief: psychological profiling, mythos, publishing intent |
+| Defense | Intent scans + depth + prosecution | `DEFENSE.md` | Charitable rebuttal with the same structure as prosecution |
+| Judgement | All prior artifacts | `JUDGEMENT.md` | Middle-ground synthesis and a committed legitimacy verdict |
 
 ## Install
 
@@ -139,11 +136,9 @@ The binary is written to `target/release/middleton`.
 
 ## Docker
 
-> [!WARNING]
-> Docker images and `compose.yaml` are **not fully tested** — not in CI, and not
-> manually across every agent platform. We don't hold accounts on all backends and
-> wouldn't pay to run full end-to-end trials against each one. Treat this path as
-> experimental; expect breakage.
+Docker images and `compose.yaml` are experimental. They are not built in CI
+or tested manually against every agent platform. We don't hold accounts on
+all backends and haven't paid to run full trials against each one.
 
 Images bundle the `middleton` binary, pandoc/TeX for PDF export, pandoc/fonts
 for EPUB3 export, and one agent backend per runtime target. See
@@ -152,7 +147,7 @@ for service definitions.
 
 ### Build
 
-Plain `docker build` produces the **OpenCode** runtime (default target):
+Plain `docker build` produces the OpenCode runtime (default target):
 
 ```bash
 docker build -t middleton:opencode .
@@ -211,7 +206,6 @@ Persistent storage defaults to the `middleton-data` named volume mounted at
 Review a local directory with OpenCode:
 
 ```bash
-export OPENCODE_API_KEY=your-key-here
 middleton /path/to/repo
 ```
 
@@ -259,6 +253,8 @@ matching `.epub`:
 middleton --export-epub /path/to/repo/.middleton/opencode/kimi-k2-5/20250602-1430
 ```
 
+Use one export-only option at a time, without a review input path or URL.
+
 ### Options
 
 | Flag | Default | Description |
@@ -266,6 +262,7 @@ middleton --export-epub /path/to/repo/.middleton/opencode/kimi-k2-5/20250602-143
 | `--output`, `-o` | `./<repo-name>` | Clone destination when input is a git URL |
 | `--agent` | `opencode` | Agent backend: `opencode`, `claude`, or `codex` |
 | `--model` | `kimi-k2.5` | OpenCode Go catalog model id, `sonnet` / `opus` / `haiku` for Claude, or a Codex model id |
+| `--reasoning-effort` | Codex configuration | Codex only: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `ultra`; availability depends on the selected model |
 | `--hostname` | `127.0.0.1` | OpenCode server bind hostname |
 | `--opencode` | `opencode` | Path to the OpenCode binary |
 | `--claude` | `claude` | Path to the Claude binary |
@@ -281,10 +278,11 @@ middleton --export-epub /path/to/repo/.middleton/opencode/kimi-k2-5/20250602-143
 
 ### Plan vs build and agent backends
 
-During the **plan** step, agents may optionally use read-only `git` commands and
+During the plan step, agents may optionally use read-only `git` commands and
 guarded web search/fetch to corroborate external claims; prompts require labeling
-those findings as external context. During **build**, agents only write markdown
-into the current run directory from the completed plan — no new investigation.
+those findings as external context. During build, agents only write markdown
+into the current run directory using the completed plan. They do not start
+new investigations.
 
 | Backend | `repository` plan step | `documents` plan step |
 |---------|----------------------|----------------------|
@@ -292,8 +290,8 @@ into the current run directory from the completed plan — no new investigation.
 | Claude | Reads + `Bash` + `WebSearch`/`WebFetch` | Reads + web tools; `Bash` disallowed |
 | Codex | Network on; shell accepted in plan | Network on; shell declined in plan |
 
-Build steps for both profiles: file reads and `.middleton/` writes only — no shell,
-git, or web.
+Build steps in both profiles allow file reads and `.middleton/` writes.
+Shell commands and web access are disabled during build.
 
 Middleton auto-answers tool permission prompts, user-input questions, and Codex
 approval requests so Claude and Codex runs do not block waiting for a human
@@ -308,10 +306,35 @@ middleton warns at the end of a successful run (it does not fail).
 
 ## Agent Specifics
 
+### Codex
+
+Middleton supports Codex through `codex app-server`. Install and
+authenticate the Codex CLI before running:
+
+```bash
+middleton /path/to/repo --agent codex --skip-pdf --skip-epub
+```
+
+Without a Codex model override, Middleton uses the CLI's configured default
+model. Pass `--model <model-id>` to select one, or `--codex /path/to/codex`
+to use a specific executable. Use `--reasoning-effort max` to request maximum
+reasoning on models that support it; omitting the flag preserves Codex's
+configured effort. The override applies to every turn, including retries.
+Plan turns investigate the corpus. Build turns write reports and retry missing
+outputs up to the build-attempt limit.
+See the [official app-server documentation](https://developers.openai.com/codex/app-server)
+for the underlying protocol.
+
 ### OpenCode
 
-Middleton uses the **OpenCode Go** provider (`opencode-go`). Pass a catalog
-model id to `--model` (default `kimi-k2.5`).
+Middleton uses the OpenCode Go provider (`opencode-go`). Pass a catalog
+model id to `--model` (default `kimi-k2.5`), optionally prefixed with
+`opencode-go/`. For example, `--model opencode-go/minimax-m3.1-flash` and
+`--model minimax-m3.1-flash` select the same model.
+
+OpenCode loads its saved provider credentials when Middleton starts it.
+If authentication is not configured, run `opencode auth login` and select
+OpenCode Go. Existing logins do not require `OPENCODE_API_KEY` to be exported.
 
 To list models available on that provider:
 
@@ -319,14 +342,14 @@ To list models available on that provider:
 opencode models opencode-go
 ```
 
-This displays the **OpenCode Go** provider's models — usually what you want.
+This lists the OpenCode Go catalog. Running the following command instead
+lists every configured provider:
 
 ```bash
 opencode models
 ```
 
-shows all models across every provider, but it's easy to change your billing by
-picking a different one.
+Choose the provider deliberately because billing differs between providers.
 
 ## Output
 
@@ -357,30 +380,61 @@ Prior runs remain under `.middleton/` in sibling timestamp directories. Agents a
 instructed not to browse that tree; each run only reads its own phase artifacts.
 
 When `--note` is provided, the note is saved privately under
-`context/reviewer-note.md` and injected into prompts as a confidential **context
-hint** for all parties. It may steer what gets a second look, but must not overtake
-the review or dominate writeups — the corpus and prior phase artifacts stay primary.
+`context/reviewer-note.md` and injected into prompts as a confidential context
+hint for all parties. It may steer what gets a second look, but must not overtake
+the review or dominate writeups. The corpus and prior phase artifacts remain
+the primary evidence.
 Public output must not cite the note itself or treat it as evidence.
 
-After the pipeline completes, middleton writes **`TRIAL.md`** by merging the phase
+After the pipeline completes, middleton writes `TRIAL.md` by merging the phase
 reports in this order: Judgement, Prosecution, Defense, Depth, then any other
 markdown artifacts (for example the intent scans). Each source file is kept;
 `TRIAL.md` is an additional single-file outcome.
 
-Unless `--skip-pdf` is set, middleton then runs **pandoc** on every phase `.md`
+Unless `--skip-pdf` is set, middleton then runs pandoc on every phase `.md`
 file and on `TRIAL.md`, writing matching `.pdf` files with numbered sections, a
 table of contents, syntax highlighting, and a styled header/footer.
 
-Unless `--skip-epub` is set, middleton runs **pandoc** on the same markdown files,
+Unless `--skip-epub` is set, middleton runs pandoc on the same markdown files,
 writing matching `.epub` files (EPUB3) with the same structure and middleton
 branding. Export pre-processes agent markdown before pandoc: level-3+ headings are
 flattened for clean PDF tables of contents; legacy `* **A)**` quiz-style bullets
 are normalized to lettered lists; pandoc uses `markdown-raw_tex` so incidental
-`\citep`-style LaTeX in agent prose is literal, not executed; metadata (`title`,
-`author`, `lang`) is set via the pandoc CLI, not YAML front matter in the reports.
+`\citep`-style LaTeX in agent prose is treated as literal text. The pandoc CLI
+sets metadata (`title`, `author`, `lang`) for each export.
 
 The target repository itself is not modified beyond the `.middleton/` tree.
 
+## Contributing with coding agents
+
+Start Codex from the repository root with `codex`. The root
+[`AGENTS.md`](AGENTS.md) supplies the project map, build commands, tests,
+and review rules. Codex reads this guidance automatically; see
+[OpenAI's agent instructions guide](https://developers.openai.com/codex/guides/agents-md).
+The same file is portable to other clients supporting the AGENTS.md standard.
+
+Local checks match CI:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-targets --all-features
+rumdl check README.md AGENTS.md
+```
+
+These checks do not need backend API keys. Generated `.middleton/` reports
+are ignored by Git.
+
+CI checks formatting and runs Clippy. Tests run on Linux and macOS, with a
+separate check for the Rust version configured in `Dockerfile`.
+Markdown linting pins rumdl to `0.2.62`.
+The dependency audit runs on dependency changes and every Monday using
+cargo-audit `0.22.1`, fetching current RustSec advisories. To run it locally:
+
+```bash
+cargo audit --deny warnings
+```
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT; see [LICENSE](LICENSE).
